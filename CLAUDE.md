@@ -55,6 +55,30 @@ Scripts should be optimised for footage captured with these specs:
 
 ## Full Pipeline — Steps & Commands
 
+### Step 0: Install Prerequisites (`00-install-prereqs.ps1`)
+Tool: PowerShell + pip
+
+**What it does:**
+- Installs PyTorch with CUDA 11.8 support (required by gaussian-splatting)
+- Installs pipeline script dependencies from `requirements.txt`
+- Installs gaussian-splatting repo requirements and builds CUDA submodules
+- Checks PATH for required external tools (ffmpeg, colmap) and GPU via nvidia-smi
+
+**Run once before using any pipeline scripts. Requires:**
+- CUDA Toolkit 11.8 — https://developer.nvidia.com/cuda-11-8-0-download-archive
+- gaussian-splatting repo cloned with `--recursive`
+
+**Example usage:**
+```powershell
+# Default repo path C:\apps\gaussian-splatting
+.\scripts\00-install-prereqs.ps1
+
+# Custom repo path
+.\scripts\00-install-prereqs.ps1 -RepoPath C:\apps\gaussian-splatting
+```
+
+---
+
 ### Step 1: Frame Extraction (`01_extract_frames.py`)
 Tool: FFmpeg
 
@@ -200,6 +224,24 @@ python train.py \
 - Monitor training output and warn if loss stalls above 0.1 early
 - Print final loss value and output `.ply` path on completion
 
+**Example usage (project: 20260411-house):**
+```bash
+# Standard run — 30000 iterations, VRAM auto-detected, repo at ./gaussian-splatting
+python scripts/04_train_splat.py projects/20260411-house --repo C:/apps/gaussian-splatting
+
+# Quick test run — 10000 iterations to check the splat is working before full train
+python scripts/04_train_splat.py projects/20260411-house --iterations 10000 --repo C:/apps/gaussian-splatting
+
+# Force a downsample if running low on VRAM (use 2, 4, or 8)
+python scripts/04_train_splat.py projects/20260411-house --downsample 4 --repo C:/apps/gaussian-splatting
+
+# Specify repo path if not cloned into the default location
+python scripts/04_train_splat.py projects/20260411-house --repo C:/apps/gaussian-splatting
+
+# Output .ply location when done:
+# projects/20260411-house/output/point_cloud/iteration_30000/point_cloud.ply
+```
+
 ---
 
 ### Step 5: Pipeline Runner (`run_pipeline.py`)
@@ -289,6 +331,17 @@ External tools (must be installed separately and on PATH):
 | Training loss plateaus >0.1 | Bad camera poses | Warn after 5000 iterations if loss not dropping |
 | FFmpeg not found | Not on PATH | Clear error message with install instructions |
 | Frames folder already exists | Re-run scenario | Ask user to confirm overwrite or skip |
+
+---
+
+## PowerShell Scripting Rules
+
+Rules learned from bugs. Follow these in all `.ps1` scripts:
+
+- **Never use `$args` as a parameter name** — it is a reserved automatic variable in PowerShell. Use `$pipArgs`, `$cmdArgs`, etc. instead.
+- **Never use `Set-StrictMode -Version Latest` in setup scripts** — it breaks graceful handling of missing tools and causes unexpected parse failures.
+- **Never use `2>$null` to capture command output into a variable** — it is unreliable in assignments. Use `2>&1` to merge stderr into stdout, then check `$LASTEXITCODE`.
+- **Never use `$ErrorActionPreference = "Stop"` globally** — use `-ErrorAction Stop` on specific cmdlets that should terminate on failure instead.
 
 ---
 
