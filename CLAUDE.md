@@ -96,6 +96,21 @@ Tool: OpenCV (blur detection via Laplacian variance)
 - `cull_report.txt` listing flagged files with scores
 - Optionally moves culled frames to `frames/culled/` subfolder rather than deleting
 
+**Example usage (project: 20260411-house):**
+```bash
+# Dry run first — see what would be flagged without touching anything
+python scripts/02_cull_frames.py projects/20260411-house/frames --dry-run
+
+# Review the report
+# cat projects/20260411-house/frames/cull_report.txt
+
+# Auto-cull flagged frames (moves to frames/culled/, copies kept frames to input/)
+python scripts/02_cull_frames.py projects/20260411-house/frames --auto-cull
+
+# If too many frames flagged, loosen the blur threshold and retry
+python scripts/02_cull_frames.py projects/20260411-house/frames --auto-cull --blur-threshold 60
+```
+
 ---
 
 ### Step 3: COLMAP SfM (`03_run_colmap.py`)
@@ -145,6 +160,21 @@ colmap image_undistorter \
 - After mapper, read `images.txt` and report: X of Y images registered (%)
 - Warn if <70% registered — suggest exhaustive matching or re-culling
 - Warn if multiple sparse models produced (fragmentation)
+
+**Example usage (project: 20260411-house):**
+```bash
+# Standard run — sequential matcher, overlap 15
+python scripts/03_run_colmap.py projects/20260411-house
+
+# If registration is low (<70%) or footage is multi-clip — try exhaustive matcher
+python scripts/03_run_colmap.py projects/20260411-house --exhaustive
+
+# Increase overlap for fast-moving footage or tight arc passes
+python scripts/03_run_colmap.py projects/20260411-house --overlap 25
+
+# Re-run after failed attempt (auto-deletes stale database.db)
+python scripts/03_run_colmap.py projects/20260411-house --exhaustive --overwrite
+```
 
 ---
 

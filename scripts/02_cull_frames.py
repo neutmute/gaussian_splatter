@@ -9,8 +9,8 @@ Usage:
     python scripts/02_cull_frames.py [options]
 
 Options:
-    --frames-dir DIR        Input frames folder (default: ./frames)
-    --output-dir DIR        Destination for kept frames (default: ./input)
+    frames_dir              Input frames folder (positional, default: ./frames)
+    --output-dir DIR        Destination for kept frames (default: <frames_dir>/../input)
     --blur-threshold FLOAT  Laplacian variance below this = blurry (default: 100)
     --sim-threshold FLOAT   Normalised similarity above this = duplicate (default: 0.985)
     --dry-run               Report only, do not move or delete anything
@@ -61,10 +61,10 @@ def score_frame(path: Path, thumb_size=(320, 180)):
 
 def main():
     parser = argparse.ArgumentParser(description="Cull blurry / duplicate frames")
-    parser.add_argument("--frames-dir", default="frames",
+    parser.add_argument("frames_dir", nargs="?", default="frames",
                         help="Folder containing extracted frames (default: ./frames)")
-    parser.add_argument("--output-dir", default="input",
-                        help="Folder to copy kept frames into (default: ./input)")
+    parser.add_argument("--output-dir", default=None,
+                        help="Folder to copy kept frames into (default: <frames_dir>/../input)")
     parser.add_argument("--blur-threshold", type=float, default=100.0,
                         help="Laplacian variance threshold; below = blurry (default: 100)")
     parser.add_argument("--sim-threshold", type=float, default=0.985,
@@ -75,8 +75,8 @@ def main():
                         help="Move flagged frames to frames/culled/ without prompting")
     args = parser.parse_args()
 
-    frames_dir = Path(args.frames_dir)
-    output_dir = Path(args.output_dir)
+    frames_dir = Path(args.frames_dir)  # positional or default
+    output_dir = Path(args.output_dir) if args.output_dir else frames_dir.parent / "input"
     culled_dir = frames_dir / "culled"
 
     if not frames_dir.exists():
@@ -122,24 +122,27 @@ def main():
     print(f"Results: {total} scanned, {len(flagged)} flagged, {kept_count} to keep")
     print()
 
-    # Write report
-    report_path = frames_dir / "cull_report.txt"
-    if not args.dry_run:
-        with open(report_path, "w") as f:
-            f.write(f"Total frames : {total}\n")
-            f.write(f"Flagged      : {len(flagged)}\n")
-            f.write(f"Kept         : {kept_count}\n")
-            f.write(f"Blur thresh  : {args.blur_threshold}\n")
-            f.write(f"Sim thresh   : {args.sim_threshold}\n\n")
-            for path, score, flag in results:
-                status = f"FLAGGED  {flag}" if flag else f"ok       score={score:.1f}"
-                f.write(f"{path.name}  {status}\n")
-        print(f"Report written: {report_path}")
-
-    if args.dry_run:
-        print("[DRY RUN] Flagged files:")
+    # Always print flagged files to console
+    if flagged:
+        print("Flagged frames:")
         for path, _, flag in flagged:
             print(f"  {path.name}  -- {flag}")
+        print()
+
+    # Always write report (dry-run included — useful for review without side effects)
+    report_path = frames_dir / "cull_report.txt"
+    with open(report_path, "w") as f:
+        f.write(f"Total frames : {total}\n")
+        f.write(f"Flagged      : {len(flagged)}\n")
+        f.write(f"Kept         : {kept_count}\n")
+        f.write(f"Blur thresh  : {args.blur_threshold}\n")
+        f.write(f"Sim thresh   : {args.sim_threshold}\n\n")
+        for path, score, flag in results:
+            status = f"FLAGGED  {flag}" if flag else f"ok       score={score:.1f}"
+            f.write(f"{path.name}  {status}\n")
+    print(f"Report written: {report_path}")
+
+    if args.dry_run:
         print(f"\n[DRY RUN] {len(flagged)} frames would be moved to {culled_dir}/")
         print(f"[DRY RUN] {kept_count} frames would be copied to {output_dir}/")
         return
