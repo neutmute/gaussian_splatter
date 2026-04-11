@@ -1,9 +1,6 @@
 # 00-install-prereqs.ps1 -- Install all dependencies for the Gaussian Splat pipeline
 # Run once before using any of the pipeline scripts.
 #
-# IMPORTANT: Run this from a "Developer Command Prompt for VS 2022"
-#            (or call vcvars64.bat first) so cl.exe is available for CUDA compilation.
-#
 # Usage:
 #   .\scripts\00-install-prereqs.ps1
 #   .\scripts\00-install-prereqs.ps1 -GsplatPath C:\apps\gsplat
@@ -13,7 +10,7 @@
 #   2. Pipeline script dependencies (opencv, numpy, tqdm, etc.)
 #   3. gsplat repo + examples dependencies
 #      - Clones https://github.com/nerfstudio-project/gsplat if not present
-#      - Builds with DISTUTILS_USE_SDK=1 pip install .
+#      - Builds with DISTUTILS_USE_SDK=1 pip install --no-build-isolation .
 #      - Applies the Windows pycolmap binary-parsing fix
 
 param(
@@ -25,6 +22,57 @@ param(
 # ---------------------------------------------------------------------------
 function Check-Command($cmdName) {
     return [bool](Get-Command $cmdName -ErrorAction SilentlyContinue)
+}
+
+# ---------------------------------------------------------------------------
+# Auto-load VS 2022 Build Tools environment (cl.exe) if not already present
+# This is what "Developer Command Prompt for VS 2022" does -- we do it here
+# so the script works from a plain PowerShell or conda prompt too.
+# ---------------------------------------------------------------------------
+if (-not (Check-Command "cl")) {
+    Write-Host "cl.exe not on PATH -- searching for VS 2022 Build Tools vcvars64.bat ..." -ForegroundColor Yellow
+
+    $vcvarsSearchPaths = @(
+        "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat",
+        "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat",
+        "C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat",
+        "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat",
+        "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+    )
+
+    $vcvars = $vcvarsSearchPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+    if ($vcvars) {
+        Write-Host "  Found: $vcvars"
+        Write-Host "  Loading MSVC environment variables..."
+
+        # Run vcvars64.bat in cmd.exe and capture the resulting environment,
+        # then import every changed variable into the current PowerShell session.
+        $envDump = cmd.exe /c "`"$vcvars`" > nul 2>&1 && set"
+        foreach ($line in $envDump) {
+            if ($line -match "^([^=]+)=(.*)$") {
+                $varName  = $Matches[1]
+                $varValue = $Matches[2]
+                [System.Environment]::SetEnvironmentVariable($varName, $varValue, "Process")
+            }
+        }
+
+        if (Check-Command "cl") {
+            Write-Host "  [OK] cl.exe loaded from VS 2022 Build Tools." -ForegroundColor Green
+        } else {
+            Write-Warning "  cl.exe still not found after loading vcvars64.bat -- build may fail."
+        }
+    } else {
+        Write-Warning ""
+        Write-Warning "  VS 2022 Build Tools not found. gsplat CUDA build requires cl.exe."
+        Write-Warning "  Install from: https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022"
+        Write-Warning "  Select workload: 'Desktop development with C++'"
+        Write-Warning ""
+        $ans = Read-Host "  Continue anyway? [y/N]"
+        if ($ans.ToLower() -ne "y") { exit 1 }
+    }
+} else {
+    Write-Host "cl.exe already on PATH -- MSVC environment ready." -ForegroundColor Green
 }
 
 function Run-Pip($pipArgs) {
@@ -47,6 +95,14 @@ Write-Host "Python : $pyVer"
 if ($pyVer -notmatch "3\.(9|10|11)") {
     Write-Warning "  gsplat is tested on Python 3.9-3.11. Python 3.10 is recommended."
     Write-Warning "  Your version ($pyVer) may cause issues."
+    Write-Warning "  Switch with conda:"
+    Write-Warning "    conda create -y -n gsplat python=3.10"
+    Write-Warning "    conda activate gsplat"
+    Write-Warning "  Then re-run this script from within that environment."
+    Write-Warning "  Miniconda: https://docs.anaconda.com/miniconda/install/"
+    Write-Host ""
+    $ans = Read-Host "  Continue anyway with $pyVer? [y/N]"
+    if ($ans.ToLower() -ne "y") { exit 1 }
 }
 Write-Host ""
 
@@ -137,7 +193,9 @@ if (Check-Command "nvcc") {
         $nvccMaj = [int]$Matches[1]; $nvccMin = [int]$Matches[2]
         Write-Host "  nvcc version: $nvccMaj.$nvccMin"
 
-        $gpuName = (nvidia-smi --query-gpu=name --format=csv,noheader 2>&1) | Select-Object -First 1
+        $gpuName = if (Check-Command "nvidia-smi") {
+            (nvidia-smi --query-gpu=name --format=csv,noheader 2>&1) | Select-Object -First 1
+        } else { "" }
         if ($gpuName -match "RTX\s*50\d\d" -and ($nvccMaj -lt 12 -or ($nvccMaj -eq 12 -and $nvccMin -lt 8))) {
             Write-Warning ""
             Write-Warning "  *** BLACKWELL GPU DETECTED: $gpuName ***"
@@ -155,9 +213,15 @@ if (Check-Command "nvcc") {
 
 # DISTUTILS_USE_SDK=1 is required on Windows to use the MSVC compiler from VS Build Tools
 # without it, setuptools falls back to MinGW which cannot link CUDA code
-Write-Host "  Building gsplat (DISTUTILS_USE_SDK=1 pip install .) ..."
+Write-Host "  Installing build tools (wheel, ninja)..."
+python -m pip install wheel ninja
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "  Could not install wheel/ninja -- gsplat build may be slow or fail."
+}
+
+Write-Host "  Building gsplat (DISTUTILS_USE_SDK=1 pip install --no-build-isolation .) ..."
 $env:DISTUTILS_USE_SDK = "1"
-python -m pip install $GsplatPath
+python -m pip install --no-build-isolation $GsplatPath
 if ($LASTEXITCODE -ne 0) {
     Write-Warning "  gsplat build failed."
     Write-Warning "  Ensure you are running from a Developer Command Prompt for VS 2022"
