@@ -1,11 +1,13 @@
 """
-03_run_colmap.py — Run the full COLMAP SfM pipeline for Gaussian Splat.
+03_run_colmap.py — Run the COLMAP SfM pipeline for gsplat.
 
-Runs COLMAP headlessly in four stages:
-  1. Feature extraction
-  2. Feature matching  (sequential by default, exhaustive with --exhaustive)
-  3. Sparse reconstruction (mapper)
-  4. Image undistortion
+Runs COLMAP headlessly in three stages:
+  1. Feature extraction       (GPU-accelerated)
+  2. Feature matching         (sequential by default; exhaustive with --exhaustive)
+  3. Sparse reconstruction    (mapper)
+
+No undistortion step — gsplat reads the COLMAP sparse model directly from
+sparse/0/ and handles undistortion internally when loading the dataset.
 
 Usage:
     python scripts/03_run_colmap.py <project_dir> [options]
@@ -13,17 +15,18 @@ Usage:
 Examples:
     python scripts/03_run_colmap.py projects/house_01
     python scripts/03_run_colmap.py projects/house_01 --exhaustive
-    python scripts/03_run_colmap.py projects/house_01 --overlap 25 --colmap-bin "C:/COLMAP/colmap.exe"
+    python scripts/03_run_colmap.py projects/house_01 --exhaustive --guided-matching --relaxed
+    python scripts/03_run_colmap.py projects/house_01 --overlap 25
+    python scripts/03_run_colmap.py projects/house_01 --overwrite
 
-Expected project layout (matches 02_cull_frames.py output):
+Expected project layout (output of 02_cull_frames.py):
     <project_dir>/
-        input/          <- undistorted/culled frames (COLMAP input)
-    After this script:
-        <project_dir>/
-            database.db
-            distorted/sparse/0/   <- sparse model
-            sparse/               <- undistorted sparse
-            images/               <- undistorted images
+        images/         <- culled frames copied here by 02_cull_frames.py
+
+After this script:
+    <project_dir>/
+        colmap.db
+        sparse/0/       <- sparse model (cameras.bin, images.bin, points3D.bin)
 """
 
 import argparse
@@ -35,7 +38,7 @@ from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
-# COLMAP helpers
+# Helpers
 # ---------------------------------------------------------------------------
 
 def run(cmd: list[str], step: str, log_fh) -> None:
@@ -57,41 +60,36 @@ def run(cmd: list[str], step: str, log_fh) -> None:
                  f"Full log: {log_fh.name}")
 
 
-def count_images_in_input(input_dir: Path) -> int:
+def count_images(image_dir: Path) -> int:
     exts = {".jpg", ".jpeg", ".png", ".bmp"}
-    return sum(1 for p in input_dir.iterdir() if p.suffix.lower() in exts)
+    return sum(1 for p in image_dir.iterdir() if p.suffix.lower() in exts)
 
 
-def parse_registration_stats(sparse_dir: Path) -> tuple[int, int]:
+def parse_registration_stats(sparse_0: Path) -> int:
     """
-    Return (registered, registered) by reading the sparse model output.
-    Prefers images.bin (COLMAP's default binary output); falls back to images.txt.
+    Return number of registered images from sparse/0/.
+    Reads images.bin (binary COLMAP format) or falls back to images.txt.
     """
-    images_bin = sparse_dir / "images.bin"
-    images_txt = sparse_dir / "images.txt"
+    images_bin = sparse_0 / "images.bin"
+    images_txt = sparse_0 / "images.txt"
 
     if images_bin.exists():
-        # Binary format: first 8 bytes are a uint64 image count.
         with open(images_bin, "rb") as f:
             num_images = struct.unpack("<Q", f.read(8))[0]
-        return num_images, num_images
+        return num_images
 
     if images_txt.exists():
-        # Text format: two non-comment lines per registered image.
-        image_lines = sum(
-            1 for line in images_txt.read_text().splitlines()
-            if line.strip() and not line.startswith("#")
-        )
-        return image_lines // 2, image_lines // 2
+        lines = [l for l in images_txt.read_text().splitlines()
+                 if l.strip() and not l.startswith("#")]
+        return len(lines) // 2  # two lines per image in text format
 
-    return 0, 0
+    return 0
 
 
-def count_sparse_models(distorted_sparse: Path) -> int:
-    """Return the number of sub-models produced by the mapper (0, 1, 2, …)."""
-    if not distorted_sparse.exists():
+def count_sparse_models(sparse_dir: Path) -> int:
+    if not sparse_dir.exists():
         return 0
-    return sum(1 for p in distorted_sparse.iterdir() if p.is_dir())
+    return sum(1 for p in sparse_dir.iterdir() if p.is_dir())
 
 
 # ---------------------------------------------------------------------------
@@ -100,52 +98,64 @@ def count_sparse_models(distorted_sparse: Path) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run the full COLMAP SfM pipeline (feature extraction → undistortion).",
+        description="Run the COLMAP SfM pipeline (feature extraction → sparse reconstruction).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     parser.add_argument("project_dir", type=Path,
-                        help="Project root directory (must contain an 'input/' subfolder with frames).")
+                        help="Project root directory (must contain an 'images/' subfolder).")
     parser.add_argument("--overlap", type=int, default=15,
                         help="Sequential matcher overlap (default: 15). "
-                             "Increase to 20–30 for fast-moving or tricky footage.")
+                             "Increase to 20–30 for fast-moving or multi-clip footage.")
     parser.add_argument("--exhaustive", action="store_true",
                         help="Use exhaustive matcher instead of sequential. "
-                             "Much slower but more robust for non-sequential or difficult footage.")
+                             "Slower but more robust for non-sequential or difficult footage.")
+    parser.add_argument("--guided-matching", action="store_true",
+                        help="Enable guided SIFT matching (geometric constraint filtering). "
+                             "Helps with repetitive textures and difficult scenes.")
+    parser.add_argument("--relaxed", action="store_true",
+                        help="Relax mapper initialisation thresholds — useful when COLMAP "
+                             "fails to find an initial pair. Lowers init_min_tri_angle (16→2), "
+                             "init_min_num_inliers (100→4), abs_pose_min_num_inliers (30→3), "
+                             "abs_pose_max_error (12→8).")
+    parser.add_argument("--camera-model", default="OPENCV",
+                        help="COLMAP camera model (default: OPENCV, handles drone barrel distortion). "
+                             "Use PINHOLE for objects captured with near-distortion-free lenses.")
     parser.add_argument("--colmap-bin", default="colmap",
                         help="Path to the COLMAP executable (default: 'colmap', assumed on PATH).")
     parser.add_argument("--overwrite", action="store_true",
-                        help="Automatically delete an existing database.db and start fresh. "
-                             "Without this flag you will be prompted interactively.")
-    parser.add_argument("--camera-model", default="OPENCV",
-                        help="COLMAP camera model (default: OPENCV). "
-                             "Use SIMPLE_RADIAL for GoPro or wide-angle lenses.")
+                        help="Delete existing colmap.db and sparse/ and start fresh.")
     args = parser.parse_args()
 
-    project   = args.project_dir.resolve()
-    colmap    = args.colmap_bin
-    input_dir = project / "input"
-    db        = project / "database.db"
-    dist_sparse = project / "distorted" / "sparse"
+    project    = args.project_dir.resolve()
+    colmap     = args.colmap_bin
+    images_dir = project / "images"
+    db         = project / "colmap.db"
+    sparse_dir = project / "sparse"
 
     # --- Pre-flight checks ---
     if not project.exists():
         sys.exit(f"ERROR: project directory not found: {project}")
-    if not input_dir.exists():
+    if not images_dir.exists():
         sys.exit(
-            f"ERROR: input/ folder not found inside {project}\n"
+            f"ERROR: images/ folder not found inside {project}\n"
             "Run 02_cull_frames.py first to populate it."
         )
 
-    n_input = count_images_in_input(input_dir)
+    n_input = count_images(images_dir)
     if n_input == 0:
-        sys.exit(f"ERROR: No images found in {input_dir}")
-    print(f"Project  : {project}")
-    print(f"Images   : {n_input} frames in input/")
-    print(f"Matcher  : {'exhaustive' if args.exhaustive else f'sequential (overlap={args.overlap})'}")
+        sys.exit(f"ERROR: No images found in {images_dir}")
 
-    # Handle existing database and sparse output from a previous run
-    stale = [p for p in [db, dist_sparse] if p.exists()]
+    print(f"Project  : {project}")
+    print(f"Images   : {n_input} frames in images/")
+    print(f"Matcher  : {'exhaustive' if args.exhaustive else f'sequential (overlap={args.overlap})'}"
+          + (" + guided" if args.guided_matching else ""))
+    print(f"Camera   : {args.camera_model}")
+    if args.relaxed:
+        print("Mapper   : relaxed initialisation thresholds")
+
+    # Handle stale output from a previous run
+    stale = [p for p in [db, sparse_dir] if p.exists()]
     if stale:
         if args.overwrite:
             for p in stale:
@@ -162,9 +172,7 @@ def main() -> None:
                     print(f"Removing {p}")
                     p.unlink() if p.is_file() else shutil.rmtree(p)
             else:
-                sys.exit(
-                    "Aborted. Remove stale files manually or re-run with --overwrite."
-                )
+                sys.exit("Aborted. Remove stale files manually or re-run with --overwrite.")
 
     # Verify COLMAP is reachable
     try:
@@ -172,139 +180,133 @@ def main() -> None:
     except (FileNotFoundError, subprocess.CalledProcessError):
         sys.exit(
             f"ERROR: COLMAP not found at '{colmap}'.\n"
-            "Install COLMAP and ensure it is on your PATH, or pass --colmap-bin <path>."
+            "Download v3.11+ from https://github.com/colmap/colmap/releases\n"
+            "and ensure it is on your PATH, or pass --colmap-bin <path>."
         )
 
-    # Create output directories
-    dist_sparse.mkdir(parents=True, exist_ok=True)
+    sparse_dir.mkdir(parents=True, exist_ok=True)
 
     log_path = project / "colmap.log"
-    print(f"Logging COLMAP output to: {log_path}\n")
+    print(f"Logging to : {log_path}\n")
 
     with open(log_path, "w") as log_fh:
 
-        # -----------------------------------------------------------------------
+        # -------------------------------------------------------------------
         # Stage 1: Feature extraction
-        # -----------------------------------------------------------------------
+        # -------------------------------------------------------------------
         run(
             [
                 colmap, "feature_extractor",
-                "--database_path", str(db),
-                "--image_path",    str(input_dir),
+                "--database_path",             str(db),
+                "--image_path",                str(images_dir),
                 "--ImageReader.camera_model",  args.camera_model,
                 "--ImageReader.single_camera", "1",
+                "--SiftExtraction.use_gpu",    "1",
             ],
-            step="1/4 — Feature extraction",
+            step="1/3 — Feature extraction",
             log_fh=log_fh,
         )
 
-        # -----------------------------------------------------------------------
+        # -------------------------------------------------------------------
         # Stage 2: Feature matching
-        # -----------------------------------------------------------------------
+        # -------------------------------------------------------------------
+        guided_flag = ["--SiftMatching.guided_matching", "1"] if args.guided_matching else []
+
         if args.exhaustive:
             run(
-                [colmap, "exhaustive_matcher", "--database_path", str(db)],
-                step="2/4 — Exhaustive matching",
+                [
+                    colmap, "exhaustive_matcher",
+                    "--database_path",          str(db),
+                    "--SiftMatching.use_gpu",   "1",
+                    *guided_flag,
+                ],
+                step="2/3 — Exhaustive matching" + (" (guided)" if args.guided_matching else ""),
                 log_fh=log_fh,
             )
         else:
             run(
                 [
                     colmap, "sequential_matcher",
-                    "--database_path", str(db),
-                    "--SequentialMatching.overlap", str(args.overlap),
+                    "--database_path",                    str(db),
+                    "--SequentialMatching.overlap",       str(args.overlap),
+                    "--SiftMatching.use_gpu",             "1",
+                    *guided_flag,
                 ],
-                step=f"2/4 — Sequential matching (overlap={args.overlap})",
+                step=f"2/3 — Sequential matching (overlap={args.overlap})"
+                     + (" (guided)" if args.guided_matching else ""),
                 log_fh=log_fh,
             )
 
-        # -----------------------------------------------------------------------
+        # -------------------------------------------------------------------
         # Stage 3: Sparse reconstruction (mapper)
-        # -----------------------------------------------------------------------
+        # -------------------------------------------------------------------
+        mapper_cmd = [
+            colmap, "mapper",
+            "--database_path", str(db),
+            "--image_path",    str(images_dir),
+            "--output_path",   str(sparse_dir),
+        ]
+        if args.relaxed:
+            mapper_cmd += [
+                "--Mapper.init_min_tri_angle",       "2",   # default 16
+                "--Mapper.init_min_num_inliers",     "4",   # default 100
+                "--Mapper.abs_pose_min_num_inliers", "3",   # default 30
+                "--Mapper.abs_pose_max_error",       "8",   # default 12
+            ]
         run(
-            [
-                colmap, "mapper",
-                "--database_path", str(db),
-                "--image_path",    str(input_dir),
-                "--output_path",   str(dist_sparse),
-            ],
-            step="3/4 — Sparse reconstruction (mapper)",
+            mapper_cmd,
+            step="3/3 — Sparse reconstruction (mapper)" + (" [relaxed]" if args.relaxed else ""),
             log_fh=log_fh,
         )
 
-    # Validate registration
-    n_models = count_sparse_models(dist_sparse)
+    # --- Validate output ---
+    n_models = count_sparse_models(sparse_dir)
     print(f"\nSparse models produced: {n_models}")
 
     if n_models == 0:
         sys.exit(
-            "ERROR: Mapper produced no sparse model. "
-            "Check that frames have sufficient overlap and try --exhaustive."
+            "ERROR: Mapper produced no sparse model.\n"
+            "  Try: --exhaustive, --relaxed, or increase frame density (re-run 01_extract_frames.py)."
         )
 
     if n_models > 1:
         print(
-            f"WARNING: {n_models} separate sparse models were produced — reconstruction is fragmented.\n"
-            "  Causes: insufficient frame overlap between passes, scene gaps, or too many blurry frames.\n"
-            "  Try: --exhaustive matching, increase --overlap, or re-shoot with more bridging frames.\n"
-            "  Continuing with model 0 for undistortion (largest is usually 0)."
+            f"WARNING: {n_models} separate sparse models produced — reconstruction is fragmented.\n"
+            "  Causes: gaps between passes, insufficient overlap, too many blurry frames.\n"
+            "  Try: --exhaustive, --guided-matching, or re-shoot with more bridging frames.\n"
+            "  Continuing with model 0 (usually the largest)."
         )
 
-    sparse_model_0 = dist_sparse / "0"
-    registered, _ = parse_registration_stats(sparse_model_0)
+    sparse_0 = sparse_dir / "0"
+    registered = parse_registration_stats(sparse_0)
     pct = 100 * registered / n_input if n_input else 0
-    print(f"Registered: {registered} / {n_input} images ({pct:.1f}%)")
+    print(f"Registered : {registered} / {n_input} images ({pct:.1f}%)")
 
     if registered == 0:
         sys.exit(
-            "ERROR: 0 images were registered — reconstruction completely failed.\n"
+            "ERROR: 0 images registered — reconstruction failed completely.\n"
             "  Common causes:\n"
             "    • Frames too blurry or lacking distinct features\n"
             "    • Insufficient overlap between consecutive frames\n"
-            "    • Sequential matcher couldn't link clips (try --exhaustive)\n"
-            "    • Wrong camera model for your lens\n"
+            "    • Sequential matcher couldn't link multi-clip footage (try --exhaustive)\n"
             "  Try:\n"
-            "    • Re-run with --exhaustive\n"
+            "    • Re-run with --exhaustive --relaxed\n"
             "    • Re-run 02_cull_frames.py with a higher --blur-threshold\n"
-            "    • Increase extraction fps in 01_extract_frames.py for more overlap\n"
-            "    • Check COLMAP's output above for specific matching errors"
+            "    • Increase fps in 01_extract_frames.py for more frame overlap"
         )
 
     if pct < 70:
         print(
-            f"WARNING: Only {pct:.1f}% of images were registered (recommend ≥70%).\n"
-            "  Try:\n"
-            "    • Re-run with --exhaustive for more thorough matching\n"
-            "    • Increase --overlap (e.g. --overlap 25)\n"
-            "    • Re-run 02_cull_frames.py with a higher --blur-threshold to keep more frames\n"
-            "    • Check that input frames cover the scene without large gaps"
+            f"WARNING: Only {pct:.1f}% of images registered (recommend ≥70%).\n"
+            "  Try: --exhaustive --guided-matching, or increase --overlap (e.g. --overlap 25)"
         )
 
-        # -----------------------------------------------------------------------
-        # Stage 4: Image undistortion
-        # -----------------------------------------------------------------------
-        run(
-            [
-                colmap, "image_undistorter",
-                "--image_path",  str(input_dir),
-                "--input_path",  str(sparse_model_0),
-                "--output_path", str(project),
-                "--output_type", "COLMAP",
-            ],
-            step="4/4 — Image undistortion",
-            log_fh=log_fh,
-        )
-
-    # -----------------------------------------------------------------------
-    # Done
-    # -----------------------------------------------------------------------
     print("\n" + "="*60)
     print("  COLMAP pipeline complete.")
-    print(f"  Registered : {registered} / {n_input} images ({pct:.1f}%)")
-    print(f"  Sparse model : {sparse_model_0}")
-    print(f"  Undistorted  : {project / 'images'}")
-    print(f"  Full log     : {log_path}")
-    print("  Next step    : run 04_train_splat.py")
+    print(f"  Registered  : {registered} / {n_input} images ({pct:.1f}%)")
+    print(f"  Sparse model: {sparse_0}")
+    print(f"  Full log    : {log_path}")
+    print("  Next step   : run 04_train_splat.py")
     print("="*60 + "\n")
 
 

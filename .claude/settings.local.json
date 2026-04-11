@@ -6,7 +6,8 @@
       "Bash(python3 \"C:\\\\code\\\\gaussian-splat\\\\scripts\\\\02_cull_frames.py\" --frames-dir \"C:\\\\code\\\\gaussian-splat\\\\frames\" --dry-run)",
       "Bash(pip install:*)",
       "Bash(python3 -c ':*)",
-      "Bash(powershell.exe -File \"C:\\\\code\\\\gaussian-splat\\\\install-prereqs.ps1\")"
+      "Bash(powershell.exe -File \"C:\\\\code\\\\gaussian-splat\\\\install-prereqs.ps1\")",
+      "WebFetch(domain:smartdatascan.com)"
     ]
   }
 }

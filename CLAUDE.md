@@ -1,8 +1,10 @@
 # Gaussian Splat Pipeline — Project Context & Script Briefing
 
 > This file provides context for Claude Code to build reusable scripts for processing
-> drone footage into Gaussian Splat scenes using COLMAP + 3D Gaussian Splatting.
+> drone footage into Gaussian Splat scenes using COLMAP + gsplat.
 > Place this file in your project root: `C:\code\gaussian-splat\CLAUDE.md`
+>
+> Tutorial reference: https://smartdatascan.com/tutorials/gaussian-splatting-windows/
 
 ---
 
@@ -18,11 +20,11 @@ so the user can re-run individual steps without repeating the whole pipeline.
 ## Target Hardware & Environment
 
 - **OS:** Windows (primary), Linux (secondary)
-- **GPU:** NVIDIA (RTX 3060 minimum, 3080+ ideal), 8GB+ VRAM
-- **CUDA:** 11.8
-- **Python:** 3.9–3.11
-- **Tools required:** FFmpeg, COLMAP, Git
-- **Repo:** github.com/graphdeco-inria/gaussian-splatting
+- **GPU:** NVIDIA with CUDA support — RTX 5060 Ti (Blackwell, sm_120) is primary dev GPU
+- **CUDA Toolkit:** 12.8+ (required for Blackwell sm_120; 12.6 for Ada/older)
+- **Python:** 3.10 recommended (gsplat tested on 3.10)
+- **Tools required:** FFmpeg, COLMAP v3.11+, Git, Microsoft Build Tools for VS 2022
+- **Training repo:** github.com/nerfstudio-project/gsplat (NOT the abandoned graphdeco-inria/gaussian-splatting)
 
 ---
 
@@ -59,22 +61,29 @@ Scripts should be optimised for footage captured with these specs:
 Tool: PowerShell + pip
 
 **What it does:**
-- Installs PyTorch with CUDA 11.8 support (required by gaussian-splatting)
+- Auto-detects GPU compute capability and installs the right PyTorch CUDA build
+  - Blackwell (sm_120, RTX 50xx) → PyTorch + CUDA 12.8
+  - Ada/Hopper (sm_89+) → PyTorch + CUDA 12.1
+  - Older GPUs → PyTorch + CUDA 11.8
 - Installs pipeline script dependencies from `requirements.txt`
-- Installs gaussian-splatting repo requirements and builds CUDA submodules
+- Clones gsplat repo (if not present), sets `DISTUTILS_USE_SDK=1`, builds it with `pip install .`
+- Installs gsplat example dependencies
+- Applies the pycolmap Windows binary parsing fix
 - Checks PATH for required external tools (ffmpeg, colmap) and GPU via nvidia-smi
 
 **Run once before using any pipeline scripts. Requires:**
-- CUDA Toolkit 11.8 — https://developer.nvidia.com/cuda-11-8-0-download-archive
-- gaussian-splatting repo cloned with `--recursive`
+- CUDA Toolkit matching your GPU (12.8 for Blackwell) — https://developer.nvidia.com/cuda-downloads
+- Microsoft Build Tools for VS 2022 with "Desktop development with C++" workload
+  — https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022
+- Run from a "Developer Command Prompt for VS 2022" (or vcvars64.bat must have been called)
 
 **Example usage:**
 ```powershell
-# Default repo path C:\apps\gaussian-splatting
+# Default gsplat path C:\apps\gsplat
 .\scripts\00-install-prereqs.ps1
 
-# Custom repo path
-.\scripts\00-install-prereqs.ps1 -RepoPath C:\apps\gaussian-splatting
+# Custom gsplat path
+.\scripts\00-install-prereqs.ps1 -GsplatPath C:\apps\gsplat
 ```
 
 ---
@@ -118,7 +127,8 @@ Tool: OpenCV (blur detection via Laplacian variance)
 
 **Output:**
 - `cull_report.txt` listing flagged files with scores
-- Optionally moves culled frames to `frames/culled/` subfolder rather than deleting
+- Kept frames copied to `<project>/images/` (the COLMAP input folder)
+- Flagged frames moved to `frames/culled/` subfolder
 
 **Example usage (project: 20260411-house):**
 ```bash
@@ -128,7 +138,7 @@ python scripts/02_cull_frames.py projects/20260411-house/frames --dry-run
 # Review the report
 # cat projects/20260411-house/frames/cull_report.txt
 
-# Auto-cull flagged frames (moves to frames/culled/, copies kept frames to input/)
+# Auto-cull flagged frames (moves to frames/culled/, copies kept frames to images/)
 python scripts/02_cull_frames.py projects/20260411-house/frames --auto-cull
 
 # If too many frames flagged, loosen the blur threshold and retry
@@ -138,50 +148,53 @@ python scripts/02_cull_frames.py projects/20260411-house/frames --auto-cull --bl
 ---
 
 ### Step 3: COLMAP SfM (`03_run_colmap.py`)
-Tool: COLMAP CLI
+Tool: COLMAP CLI v3.11+
 
 **What it does:**
-Runs the full COLMAP pipeline headlessly via CLI (no GUI required):
-1. Feature extraction
-2. Sequential matching
-3. Sparse reconstruction
-4. Image undistortion
+Runs the COLMAP pipeline headlessly via CLI (no GUI required):
+1. Feature extraction (GPU-accelerated)
+2. Feature matching  (sequential by default; exhaustive with --exhaustive)
+3. Sparse reconstruction (mapper)
+
+No undistortion step — gsplat reads the COLMAP sparse model directly and handles
+undistortion internally.
 
 ```bash
 # Feature extraction
 colmap feature_extractor \
-  --database_path project/database.db \
-  --image_path project/input \
+  --database_path project/colmap.db \
+  --image_path project/images \
   --ImageReader.camera_model OPENCV \
-  --ImageReader.single_camera 1
+  --ImageReader.single_camera 1 \
+  --SiftExtraction.use_gpu 1
 
-# Sequential matching
+# Sequential matching (default for drone footage)
 colmap sequential_matcher \
-  --database_path project/database.db \
-  --SequentialMatching.overlap 15
+  --database_path project/colmap.db \
+  --SequentialMatching.overlap 15 \
+  --SiftMatching.use_gpu 1
 
 # Sparse reconstruction
 colmap mapper \
-  --database_path project/database.db \
-  --image_path project/input \
-  --output_path project/distorted/sparse
-
-# Undistortion
-colmap image_undistorter \
-  --image_path project/input \
-  --input_path project/distorted/sparse/0 \
-  --output_path project/ \
-  --output_type COLMAP
+  --database_path project/colmap.db \
+  --image_path project/images \
+  --output_path project/sparse
 ```
 
 **Parameters to expose:**
 - Project folder path
 - Sequential overlap (default 15, increase to 20–30 for tricky footage)
 - `--exhaustive` flag — switch to exhaustive matcher (slower, more thorough)
+- `--guided-matching` flag — adds geometric constraint filtering (helps difficult scenes)
+- `--relaxed` flag — loosens mapper thresholds for scenes that fail to initialise:
+  - `--Mapper.init_min_tri_angle 2` (default: 16)
+  - `--Mapper.init_min_num_inliers 4` (default: 100)
+  - `--Mapper.abs_pose_min_num_inliers 3` (default: 30)
+  - `--Mapper.abs_pose_max_error 8` (default: 12)
 - COLMAP binary path (for non-standard installs)
 
 **Output validation:**
-- After mapper, read `images.txt` and report: X of Y images registered (%)
+- After mapper, read `sparse/0/images.bin` and report: X of Y images registered (%)
 - Warn if <70% registered — suggest exhaustive matching or re-culling
 - Warn if multiple sparse models produced (fragmentation)
 
@@ -193,53 +206,62 @@ python scripts/03_run_colmap.py projects/20260411-house
 # If registration is low (<70%) or footage is multi-clip — try exhaustive matcher
 python scripts/03_run_colmap.py projects/20260411-house --exhaustive
 
-# Increase overlap for fast-moving footage or tight arc passes
-python scripts/03_run_colmap.py projects/20260411-house --overlap 25
+# Difficult scene (repetitive facade, tight arc) — exhaustive + guided + relaxed thresholds
+python scripts/03_run_colmap.py projects/20260411-house --exhaustive --guided-matching --relaxed
 
-# Re-run after failed attempt (auto-deletes stale database.db)
-python scripts/03_run_colmap.py projects/20260411-house --exhaustive --overwrite
+# Re-run after failed attempt (auto-deletes stale colmap.db and sparse/)
+python scripts/03_run_colmap.py projects/20260411-house --overwrite
 ```
 
 ---
 
 ### Step 4: Train Gaussian Splat (`04_train_splat.py`)
-Tool: gaussian-splatting repo (`train.py`)
+Tool: gsplat repo (`examples/simple_trainer.py`)
 
 ```bash
-python train.py \
-  -s /path/to/project \
-  --iterations 30000 \
-  --model_path /path/to/output
+python simple_trainer.py default \
+  --eval_steps -1 \
+  --disable_viewer \
+  --data_factor 4 \
+  --save_ply \
+  --ply_steps 30000 \
+  --data_dir /path/to/project \
+  --result_dir /path/to/output
 ```
 
 **Parameters to expose:**
-- Project path (COLMAP output)
-- Output path
-- Iterations (default 30000, quick-test option 10000)
-- Downsample factor: `--images images_2` / `images_4` / `images_8` for low VRAM
-- gaussian-splatting repo path (if not in same directory)
+- Project path (must contain `images/` and `sparse/0/`)
+- Output path (default: `<project>/output`)
+- Iterations / ply_steps (default 30000)
+- `--data_factor` (default auto from VRAM): 1=full res, 2=half, 4=quarter, 8=eighth
+- `--gsplat` path to the gsplat repo (default: `C:/apps/gsplat`)
 
 **Logic to include:**
-- Auto-detect available VRAM and suggest downsample factor if <10GB
-- Monitor training output and warn if loss stalls above 0.1 early
-- Print final loss value and output `.ply` path on completion
+- Auto-detect available VRAM and suggest data_factor if <10 GB
+- Warn if pycolmap binary parsing issue is detected (known Windows bug — fix: reinstall from fork)
+- Print final output `.ply` path on completion
+
+**Known Windows issue — pycolmap binary parsing:**
+```
+Error: num_cameras = struct.unpack('L', f.read(8))[0]
+Fix:
+  pip uninstall pycolmap -y
+  pip install git+https://github.com/mathijshenquet/pycolmap
+```
 
 **Example usage (project: 20260411-house):**
 ```bash
-# Standard run — 30000 iterations, VRAM auto-detected, repo at ./gaussian-splatting
-python scripts/04_train_splat.py projects/20260411-house --repo C:/apps/gaussian-splatting
+# Standard run — 30000 iterations, VRAM auto-detected
+python scripts/04_train_splat.py projects/20260411-house --gsplat C:/apps/gsplat
 
-# Quick test run — 10000 iterations to check the splat is working before full train
-python scripts/04_train_splat.py projects/20260411-house --iterations 10000 --repo C:/apps/gaussian-splatting
+# Quick test run — check the splat is working before full train
+python scripts/04_train_splat.py projects/20260411-house --iterations 10000 --gsplat C:/apps/gsplat
 
-# Force a downsample if running low on VRAM (use 2, 4, or 8)
-python scripts/04_train_splat.py projects/20260411-house --downsample 4 --repo C:/apps/gaussian-splatting
-
-# Specify repo path if not cloned into the default location
-python scripts/04_train_splat.py projects/20260411-house --repo C:/apps/gaussian-splatting
+# Force a data_factor if running low on VRAM (2, 4, or 8)
+python scripts/04_train_splat.py projects/20260411-house --data-factor 4 --gsplat C:/apps/gsplat
 
 # Output .ply location when done:
-# projects/20260411-house/output/point_cloud/iteration_30000/point_cloud.ply
+# projects/20260411-house/output/ply/point_cloud_29999.ply
 ```
 
 ---
@@ -260,13 +282,16 @@ extraction:
   quality: 2
 
 colmap:
-  matcher: sequential
+  matcher: sequential   # sequential | exhaustive
   overlap: 15
   camera_model: OPENCV
+  guided_matching: false
+  relaxed: false
 
 training:
   iterations: 30000
-  downsample: auto   # auto, 1, 2, 4, 8
+  data_factor: auto     # auto, 1, 2, 4, 8
+  gsplat_path: C:/apps/gsplat
 ```
 
 **Behaviour:**
@@ -285,6 +310,7 @@ C:\code\gaussian-splat\
 ├── run_pipeline.py            ← master runner
 ├── pipeline_config.yaml       ← user config
 ├── scripts\
+│   ├── 00-install-prereqs.ps1
 │   ├── 01_extract_frames.py
 │   ├── 02_cull_frames.py
 │   ├── 03_run_colmap.py
@@ -292,15 +318,20 @@ C:\code\gaussian-splat\
 ├── projects\
 │   └── house_frontage_01\
 │       ├── footage\           ← raw MP4s go here
-│       ├── frames\            ← extracted frames
-│       ├── input\             ← culled frames for COLMAP
-│       ├── distorted\
-│       │   └── sparse\
+│       ├── frames\            ← extracted frames (with frames/culled/ subdir)
+│       ├── images\            ← culled frames — COLMAP input AND gsplat input
+│       ├── colmap.db          ← COLMAP database
 │       ├── sparse\
-│       ├── images\            ← undistorted images
-│       └── output\            ← splat .ply output
+│       │   └── 0\             ← sparse model (cameras.bin, images.bin, points3D.bin)
+│       └── output\
+│           └── ply\
+│               └── point_cloud_29999.ply   ← final output
 └── requirements.txt
 ```
+
+Note: there is NO separate `distorted/` folder and NO `image_undistorter` step.
+gsplat reads the COLMAP sparse model directly from `sparse/0/` and the original
+images from `images/`. It handles undistortion internally.
 
 ---
 
@@ -314,10 +345,11 @@ tqdm
 Pillow
 ```
 
-External tools (must be installed separately and on PATH):
-- `ffmpeg`
-- `colmap`
-- gaussian-splatting repo (cloned separately, path set in config)
+External tools (must be installed separately):
+- `ffmpeg` — on PATH
+- `colmap` v3.11+ — on PATH (download Windows ZIP from github.com/colmap/colmap/releases)
+- `gsplat` repo — cloned to disk, path passed via --gsplat flag or pipeline_config.yaml
+- Microsoft Build Tools for VS 2022 — required to compile gsplat CUDA kernels
 
 ---
 
@@ -325,12 +357,14 @@ External tools (must be installed separately and on PATH):
 
 | Issue | Cause | Script Handling |
 |---|---|---|
-| COLMAP registers <70% images | Blur, low overlap | Warn user, suggest exhaustive matcher |
+| COLMAP registers <70% images | Blur, low overlap | Warn user, suggest `--exhaustive --guided-matching` |
 | Multiple sparse models | Fragmented reconstruction | Detect in output, warn, suggest more overlap in capture |
-| VRAM OOM during training | GPU too small | Auto-detect and suggest downsample flag |
-| Training loss plateaus >0.1 | Bad camera poses | Warn after 5000 iterations if loss not dropping |
+| VRAM OOM during training | GPU too small | Auto-detect and suggest higher `--data-factor` |
+| pycolmap `struct.unpack('L'...)` error | Windows binary parsing bug in stock pycolmap | Warn and print fix command |
 | FFmpeg not found | Not on PATH | Clear error message with install instructions |
 | Frames folder already exists | Re-run scenario | Ask user to confirm overwrite or skip |
+| gsplat build fails | DISTUTILS_USE_SDK not set, or wrong CUDA toolkit | Script sets env var; check nvcc version matches PyTorch CUDA |
+| Blackwell GPU not recognised by PyTorch | Wrong PyTorch build (needs cu128) | prereqs script auto-detects sm_120 and installs cu128 build |
 
 ---
 
@@ -347,9 +381,9 @@ Rules learned from bugs. Follow these in all `.ps1` scripts:
 
 ## Viewing Output
 
-- **Browser (easiest):** supersplat.playcanvas.com — drag `.ply` file in
-- **Local viewer:** `python viewer.py` from gaussian-splatting repo
-- Output `.ply` location: `projects/[name]/output/point_cloud/iteration_30000/point_cloud.ply`
+- **Browser (easiest):** https://superspl.at/editor — drag `.ply` file in (can also install as PWA)
+- **Editing:** SuperSplat supports removing floating artifacts, cropping, merging, and exporting cleaned `.ply` files
+- Output `.ply` location: `projects/[name]/output/ply/point_cloud_29999.ply`
 
 ---
 
@@ -362,3 +396,4 @@ Rules learned from bugs. Follow these in all `.ps1` scripts:
 - Shoot in calm conditions, overcast preferred, early morning minimises traffic/people
 - D-Log M footage should be colour-graded before visual review but raw frames
   (ungraded) are fine for COLMAP — it works on luminance/feature geometry not colour
+- Dev GPU is RTX 5060 Ti (Blackwell, sm_120) — requires CUDA 12.8 + PyTorch cu128
