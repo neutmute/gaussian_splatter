@@ -27,6 +27,8 @@ Expected project layout (matches 02_cull_frames.py output):
 """
 
 import argparse
+import shutil
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -36,15 +38,23 @@ from pathlib import Path
 # COLMAP helpers
 # ---------------------------------------------------------------------------
 
-def run(cmd: list[str], step: str) -> None:
-    """Run a COLMAP sub-command, streaming output. Exit on failure."""
-    print(f"\n{'='*60}")
-    print(f"  STEP: {step}")
-    print(f"  CMD : {' '.join(cmd)}")
-    print(f"{'='*60}\n")
-    result = subprocess.run(cmd)
-    if result.returncode != 0:
-        sys.exit(f"\nERROR: COLMAP failed at step '{step}' (exit code {result.returncode}).")
+def run(cmd: list[str], step: str, log_fh) -> None:
+    """Run a COLMAP sub-command, streaming output to console and log file. Exit on failure."""
+    header = f"\n{'='*60}\n  STEP: {step}\n  CMD : {' '.join(cmd)}\n{'='*60}\n"
+    print(header)
+    log_fh.write(header + "\n")
+    log_fh.flush()
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    for line in proc.stdout:
+        print(line, end="")
+        log_fh.write(line)
+    proc.wait()
+    log_fh.flush()
+
+    if proc.returncode != 0:
+        sys.exit(f"\nERROR: COLMAP failed at step '{step}' (exit code {proc.returncode}).\n"
+                 f"Full log: {log_fh.name}")
 
 
 def count_images_in_input(input_dir: Path) -> int:
@@ -54,23 +64,27 @@ def count_images_in_input(input_dir: Path) -> int:
 
 def parse_registration_stats(sparse_dir: Path) -> tuple[int, int]:
     """
-    Read images.txt from the sparse model and return (registered, total_in_file).
-    images.txt has two lines per image; comment lines start with '#'.
+    Return (registered, registered) by reading the sparse model output.
+    Prefers images.bin (COLMAP's default binary output); falls back to images.txt.
     """
+    images_bin = sparse_dir / "images.bin"
     images_txt = sparse_dir / "images.txt"
-    if not images_txt.exists():
-        return 0, 0
 
-    image_lines = 0
-    with open(images_txt) as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#"):
-                image_lines += 1
+    if images_bin.exists():
+        # Binary format: first 8 bytes are a uint64 image count.
+        with open(images_bin, "rb") as f:
+            num_images = struct.unpack("<Q", f.read(8))[0]
+        return num_images, num_images
 
-    # Each registered image has exactly 2 lines in images.txt
-    registered = image_lines // 2
-    return registered, registered   # total=registered here; we compare against input count
+    if images_txt.exists():
+        # Text format: two non-comment lines per registered image.
+        image_lines = sum(
+            1 for line in images_txt.read_text().splitlines()
+            if line.strip() and not line.startswith("#")
+        )
+        return image_lines // 2, image_lines // 2
+
+    return 0, 0
 
 
 def count_sparse_models(distorted_sparse: Path) -> int:
@@ -130,23 +144,26 @@ def main() -> None:
     print(f"Images   : {n_input} frames in input/")
     print(f"Matcher  : {'exhaustive' if args.exhaustive else f'sequential (overlap={args.overlap})'}")
 
-    # Handle existing database
-    if db.exists():
+    # Handle existing database and sparse output from a previous run
+    stale = [p for p in [db, dist_sparse] if p.exists()]
+    if stale:
         if args.overwrite:
-            print(f"Deleting existing database: {db}")
-            db.unlink()
+            for p in stale:
+                print(f"Removing stale output: {p}")
+                p.unlink() if p.is_file() else shutil.rmtree(p)
         else:
+            stale_list = "\n  ".join(str(p) for p in stale)
             ans = input(
-                f"\ndatabase.db already exists at {db}\n"
-                "Reusing it will corrupt results with data from the previous run.\n"
-                "Delete and start fresh? [Y/n] "
+                f"\nStale output from a previous run exists:\n  {stale_list}\n"
+                "Reusing these will corrupt results. Delete and start fresh? [Y/n] "
             ).strip().lower()
             if ans in ("", "y", "yes"):
-                print(f"Deleting {db}")
-                db.unlink()
+                for p in stale:
+                    print(f"Removing {p}")
+                    p.unlink() if p.is_file() else shutil.rmtree(p)
             else:
                 sys.exit(
-                    "Aborted. Remove database.db manually or re-run with --overwrite."
+                    "Aborted. Remove stale files manually or re-run with --overwrite."
                 )
 
     # Verify COLMAP is reachable
@@ -161,50 +178,59 @@ def main() -> None:
     # Create output directories
     dist_sparse.mkdir(parents=True, exist_ok=True)
 
-    # -----------------------------------------------------------------------
-    # Stage 1: Feature extraction
-    # -----------------------------------------------------------------------
-    run(
-        [
-            colmap, "feature_extractor",
-            "--database_path", str(db),
-            "--image_path",    str(input_dir),
-            "--ImageReader.camera_model",  args.camera_model,
-            "--ImageReader.single_camera", "1",
-        ],
-        step="1/4 — Feature extraction",
-    )
+    log_path = project / "colmap.log"
+    print(f"Logging COLMAP output to: {log_path}\n")
 
-    # -----------------------------------------------------------------------
-    # Stage 2: Feature matching
-    # -----------------------------------------------------------------------
-    if args.exhaustive:
-        run(
-            [colmap, "exhaustive_matcher", "--database_path", str(db)],
-            step="2/4 — Exhaustive matching",
-        )
-    else:
+    with open(log_path, "w") as log_fh:
+
+        # -----------------------------------------------------------------------
+        # Stage 1: Feature extraction
+        # -----------------------------------------------------------------------
         run(
             [
-                colmap, "sequential_matcher",
+                colmap, "feature_extractor",
                 "--database_path", str(db),
-                "--SequentialMatching.overlap", str(args.overlap),
+                "--image_path",    str(input_dir),
+                "--ImageReader.camera_model",  args.camera_model,
+                "--ImageReader.single_camera", "1",
             ],
-            step=f"2/4 — Sequential matching (overlap={args.overlap})",
+            step="1/4 — Feature extraction",
+            log_fh=log_fh,
         )
 
-    # -----------------------------------------------------------------------
-    # Stage 3: Sparse reconstruction (mapper)
-    # -----------------------------------------------------------------------
-    run(
-        [
-            colmap, "mapper",
-            "--database_path", str(db),
-            "--image_path",    str(input_dir),
-            "--output_path",   str(dist_sparse),
-        ],
-        step="3/4 — Sparse reconstruction (mapper)",
-    )
+        # -----------------------------------------------------------------------
+        # Stage 2: Feature matching
+        # -----------------------------------------------------------------------
+        if args.exhaustive:
+            run(
+                [colmap, "exhaustive_matcher", "--database_path", str(db)],
+                step="2/4 — Exhaustive matching",
+                log_fh=log_fh,
+            )
+        else:
+            run(
+                [
+                    colmap, "sequential_matcher",
+                    "--database_path", str(db),
+                    "--SequentialMatching.overlap", str(args.overlap),
+                ],
+                step=f"2/4 — Sequential matching (overlap={args.overlap})",
+                log_fh=log_fh,
+            )
+
+        # -----------------------------------------------------------------------
+        # Stage 3: Sparse reconstruction (mapper)
+        # -----------------------------------------------------------------------
+        run(
+            [
+                colmap, "mapper",
+                "--database_path", str(db),
+                "--image_path",    str(input_dir),
+                "--output_path",   str(dist_sparse),
+            ],
+            step="3/4 — Sparse reconstruction (mapper)",
+            log_fh=log_fh,
+        )
 
     # Validate registration
     n_models = count_sparse_models(dist_sparse)
@@ -254,19 +280,20 @@ def main() -> None:
             "    • Check that input frames cover the scene without large gaps"
         )
 
-    # -----------------------------------------------------------------------
-    # Stage 4: Image undistortion
-    # -----------------------------------------------------------------------
-    run(
-        [
-            colmap, "image_undistorter",
-            "--image_path",  str(input_dir),
-            "--input_path",  str(sparse_model_0),
-            "--output_path", str(project),
-            "--output_type", "COLMAP",
-        ],
-        step="4/4 — Image undistortion",
-    )
+        # -----------------------------------------------------------------------
+        # Stage 4: Image undistortion
+        # -----------------------------------------------------------------------
+        run(
+            [
+                colmap, "image_undistorter",
+                "--image_path",  str(input_dir),
+                "--input_path",  str(sparse_model_0),
+                "--output_path", str(project),
+                "--output_type", "COLMAP",
+            ],
+            step="4/4 — Image undistortion",
+            log_fh=log_fh,
+        )
 
     # -----------------------------------------------------------------------
     # Done
@@ -276,6 +303,7 @@ def main() -> None:
     print(f"  Registered : {registered} / {n_input} images ({pct:.1f}%)")
     print(f"  Sparse model : {sparse_model_0}")
     print(f"  Undistorted  : {project / 'images'}")
+    print(f"  Full log     : {log_path}")
     print("  Next step    : run 04_train_splat.py")
     print("="*60 + "\n")
 
