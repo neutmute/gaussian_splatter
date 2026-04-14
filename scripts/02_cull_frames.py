@@ -6,11 +6,14 @@ Scores every frame for sharpness (Laplacian variance) and flags near-duplicates
 and optionally moves or deletes flagged frames.
 
 Usage:
-    python scripts/02_cull_frames.py [options]
+    python scripts/02_cull_frames.py <project_name> [options]
+
+    The project name is resolved against the standard folder structure:
+        projects/<project_name>/frames/   <- input frames
+        projects/<project_name>/images/   <- kept frames copied here
 
 Options:
-    frames_dir              Input frames folder (positional, default: ./frames)
-    --output-dir DIR        Destination for kept frames (default: <frames_dir>/../images)
+    project_name            Project folder name under projects\\ (e.g. 20260411-house)
     --blur-threshold FLOAT  Laplacian variance below this = blurry (default: 100)
     --sim-threshold FLOAT   Normalised similarity above this = duplicate (default: 0.985)
     --dry-run               Report only, do not move or delete anything
@@ -59,12 +62,20 @@ def score_frame(path: Path, thumb_size=(320, 180)):
 # Main
 # ---------------------------------------------------------------------------
 
+def resolve_project_dir(project_name: str) -> Path:
+    """Locate the project root relative to this script's location."""
+    scripts_dir = Path(__file__).parent
+    project_dir = scripts_dir.parent / "projects" / project_name
+    if not project_dir.exists():
+        sys.exit(f"Project not found: {project_dir}\n"
+                 f"Create it first with: .\\scripts\\01-create-project.ps1 -ProjectName {project_name}")
+    return project_dir
+
+
 def main():
     parser = argparse.ArgumentParser(description="Cull blurry / duplicate frames")
-    parser.add_argument("frames_dir", nargs="?", default="frames",
-                        help="Folder containing extracted frames (default: ./frames)")
-    parser.add_argument("--output-dir", default=None,
-                        help="Folder to copy kept frames into (default: <frames_dir>/../images)")
+    parser.add_argument("project_name",
+                        help="Project folder name under projects\\ (e.g. 20260411-house)")
     parser.add_argument("--blur-threshold", type=float, default=100.0,
                         help="Laplacian variance threshold; below = blurry (default: 100)")
     parser.add_argument("--sim-threshold", type=float, default=0.985,
@@ -75,9 +86,10 @@ def main():
                         help="Move flagged frames to frames/culled/ without prompting")
     args = parser.parse_args()
 
-    frames_dir = Path(args.frames_dir)  # positional or default
-    output_dir = Path(args.output_dir) if args.output_dir else frames_dir.parent / "images"
-    culled_dir = frames_dir / "culled"
+    project_dir = resolve_project_dir(args.project_name)
+    frames_dir  = project_dir / "frames"
+    output_dir  = project_dir / "images"
+    culled_dir  = frames_dir / "culled"
 
     if not frames_dir.exists():
         sys.exit(f"Frames directory not found: {frames_dir}")
@@ -86,7 +98,8 @@ def main():
     if not frames:
         sys.exit(f"No JPG frames found in {frames_dir}")
 
-    print(f"\nScanning {len(frames)} frames in {frames_dir}/")
+    print(f"\nProject        : {args.project_name}")
+    print(f"Scanning {len(frames)} frames in {frames_dir}/")
     print(f"  Blur threshold : {args.blur_threshold}  (Laplacian variance)")
     print(f"  Sim threshold  : {args.sim_threshold}  (duplicate detection)")
     print()
@@ -169,7 +182,7 @@ def main():
     for path, _, _ in kept:
         shutil.copy2(str(path), output_dir / path.name)
     print(f"Copied {len(kept)} kept frames to {output_dir}/")
-    print("\nNext step: run 03_run_colmap.py")
+    print(f"\nNext step: python scripts\\03_run_colmap.py {args.project_name}")
 
 
 if __name__ == "__main__":
