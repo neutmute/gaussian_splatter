@@ -201,7 +201,6 @@ def main() -> None:
                 "--image_path",                str(images_dir),
                 "--ImageReader.camera_model",  args.camera_model,
                 "--ImageReader.single_camera", "1",
-                "--SiftExtraction.use_gpu",    "1",
             ],
             step="1/3 — Feature extraction",
             log_fh=log_fh,
@@ -229,7 +228,6 @@ def main() -> None:
                     colmap, "sequential_matcher",
                     "--database_path",                    str(db),
                     "--SequentialMatching.overlap",       str(args.overlap),
-                    "--SiftMatching.use_gpu",             "1",
                     *guided_flag,
                 ],
                 step=f"2/3 — Sequential matching (overlap={args.overlap})"
