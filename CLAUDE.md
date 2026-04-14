@@ -243,6 +243,7 @@ colmap mapper \
   - `--Mapper.init_min_num_inliers 4` (default: 100)
   - `--Mapper.abs_pose_min_num_inliers 3` (default: 30)
   - `--Mapper.abs_pose_max_error 8` (default: 12)
+- `--camera-model` — COLMAP camera model (default: `OPENCV` for standard drone lenses; use `OPENCV_FISHEYE` for fisheye lenses like the DJI Avata 2 with 155° FOV)
 - COLMAP binary path (for non-standard installs)
 
 **Output validation:**
@@ -260,6 +261,9 @@ python scripts/03_run_colmap.py projects/20260411-house --exhaustive
 
 # Difficult scene (repetitive facade, tight arc) — exhaustive + guided + relaxed thresholds
 python scripts/03_run_colmap.py projects/20260411-house --exhaustive --guided-matching --relaxed
+
+# Fisheye lens (e.g. DJI Avata 2, 155° FOV) — use OPENCV_FISHEYE camera model
+python scripts/03_run_colmap.py projects/20260411-house --camera-model OPENCV_FISHEYE
 
 # Re-run after failed attempt (auto-deletes stale colmap.db and sparse/)
 python scripts/03_run_colmap.py projects/20260411-house --overwrite

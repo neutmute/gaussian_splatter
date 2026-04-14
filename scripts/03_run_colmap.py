@@ -6,8 +6,8 @@ Runs COLMAP headlessly in three stages:
   2. Feature matching         (sequential by default; exhaustive with --exhaustive)
   3. Sparse reconstruction    (mapper)
 
-No undistortion step — gsplat reads the COLMAP sparse model directly from
-sparse/0/ and handles undistortion internally when loading the dataset.
+Outputs sparse/0/ only. Run 04_undistort.py next to produce the dense/ folder
+required by Lichtfield Studio.
 
 Usage:
     python scripts/03_run_colmap.py <project_dir> [options]
@@ -119,8 +119,9 @@ def main() -> None:
                              "init_min_num_inliers (100→4), abs_pose_min_num_inliers (30→3), "
                              "abs_pose_max_error (12→8).")
     parser.add_argument("--camera-model", default="OPENCV",
-                        help="COLMAP camera model (default: OPENCV, handles drone barrel distortion). "
-                             "Use PINHOLE for objects captured with near-distortion-free lenses.")
+                        help="COLMAP camera model (default: OPENCV — standard wide-angle drone lenses). "
+                             "Use OPENCV_FISHEYE for fisheye lenses such as the DJI Avata 2 (155° FOV). "
+                             "Use PINHOLE for near-distortion-free lenses.")
     parser.add_argument("--colmap-bin", default="colmap",
                         help="Path to the COLMAP executable (default: 'colmap', assumed on PATH).")
     parser.add_argument("--overwrite", action="store_true",
@@ -306,7 +307,7 @@ def main() -> None:
     print(f"  Registered  : {registered} / {n_input} images ({pct:.1f}%)")
     print(f"  Sparse model: {sparse_0}")
     print(f"  Full log    : {log_path}")
-    print("  Next step   : run 04_train_splat.py")
+    print("  Next step   : python scripts/04_undistort.py <project_name>")
     print("="*60 + "\n")
 
 
