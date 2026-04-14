@@ -271,90 +271,50 @@ python scripts/03_run_colmap.py 20260411-house --overwrite
 
 ---
 
-### Step 4: Train Gaussian Splat (`04_train_splat.py`)
-Tool: gsplat repo (`examples/simple_trainer.py`)
+### Step 4: COLMAP Undistortion (`04_undistort.py`)
+Tool: COLMAP CLI (`image_undistorter`)
 
-```bash
-python simple_trainer.py default \
-  --eval_steps -1 \
-  --disable_viewer \
-  --data_factor 4 \
-  --save_ply \
-  --ply_steps 30000 \
-  --data_dir /path/to/project \
-  --result_dir /path/to/output
+**What it does:**
+Runs `colmap image_undistorter` to produce undistorted images and an undistorted sparse model
+in `projects/<name>/dense/`. This is the folder Lichtfield Studio loads directly.
+
+- `--max_image_size 1600` — required by Lichtfield Studio; larger images are downscaled
+- `--output_type COLMAP` — outputs a COLMAP-format sparse model alongside the undistorted images
+
+**Parameters:**
+- `project_name` — project folder name under `projects\` (e.g. `20260411-house`)
+- `--overwrite` — delete existing `dense/` output and re-run
+
+**Output:**
 ```
-
-**Parameters to expose:**
-- Project path (must contain `images/` and `sparse/0/`)
-- Output path (default: `<project>/output`)
-- Iterations / ply_steps (default 30000)
-- `--data_factor` (default auto from VRAM): 1=full res, 2=half, 4=quarter, 8=eighth
-- `--gsplat` path to the gsplat repo (default: `C:/apps/gsplat`)
-
-**Logic to include:**
-- Auto-detect available VRAM and suggest data_factor if <10 GB
-- Warn if pycolmap binary parsing issue is detected (known Windows bug — fix: reinstall from fork)
-- Print final output `.ply` path on completion
-
-**Known Windows issue — pycolmap binary parsing:**
-```
-Error: num_cameras = struct.unpack('L', f.read(8))[0]
-Fix:
-  pip uninstall pycolmap -y
-  pip install git+https://github.com/mathijshenquet/pycolmap
+projects/<name>/dense/
+    images/     ← undistorted images (Lichtfield input)
+    sparse/     ← undistorted sparse model (Lichtfield input)
 ```
 
 **Example usage (project: 20260411-house):**
 ```bash
-# Standard run — 30000 iterations, VRAM auto-detected
-python scripts/04_train_splat.py projects/20260411-house --gsplat C:/apps/gsplat
+# Standard run
+python scripts/04_undistort.py 20260411-house
 
-# Quick test run — check the splat is working before full train
-python scripts/04_train_splat.py projects/20260411-house --iterations 10000 --gsplat C:/apps/gsplat
-
-# Force a data_factor if running low on VRAM (2, 4, or 8)
-python scripts/04_train_splat.py projects/20260411-house --data-factor 4 --gsplat C:/apps/gsplat
-
-# Output .ply location when done:
-# projects/20260411-house/output/ply/point_cloud_29999.ply
+# Re-run after a failed or partial attempt
+python scripts/04_undistort.py 20260411-house --overwrite
 ```
 
 ---
 
-### Step 5: Pipeline Runner (`run_pipeline.py`)
-Master script that chains steps 1–4 with a single config file.
+### Step 5: Lichtfield Studio (manual)
 
-**Config file (`pipeline_config.yaml`):**
-```yaml
-project_name: house_frontage_01
-input_clips:
-  - footage/pass_high.mp4
-  - footage/pass_low.mp4
-output_dir: output/
+**What it does:**
+Lichtfield Studio is a Windows GUI application for training and viewing Gaussian Splats.
+It takes the `dense/` folder produced by Step 4 as input.
 
-extraction:
-  fps: 2
-  quality: 2
+**Steps:**
+1. Open Lichtfield Studio
+2. Load or drop the folder `projects\<name>\dense\` into the application
+3. Train from within Lichtfield Studio
 
-colmap:
-  matcher: sequential   # sequential | exhaustive
-  overlap: 15
-  camera_model: OPENCV
-  guided_matching: false
-  relaxed: false
-
-training:
-  iterations: 30000
-  data_factor: auto     # auto, 1, 2, 4, 8
-  gsplat_path: C:/apps/gsplat
-```
-
-**Behaviour:**
-- Runs each step in sequence, logging to `pipeline.log`
-- Skips steps where output already exists (resumable)
-- `--from-step 3` flag to restart from a specific step
-- Prints elapsed time per step and total on completion
+Note: Lichtfield Studio has a CLI — a `05_lichtfield.py` script is a future addition.
 
 ---
 
@@ -363,31 +323,28 @@ training:
 ```
 C:\code\gaussian-splat\
 ├── CLAUDE.md                  ← this file
-├── run_pipeline.py            ← master runner
-├── pipeline_config.yaml       ← user config
 ├── scripts\
 │   ├── 00-install-prereqs.ps1
-│   ├── 01_extract_frames.py
+│   ├── 01-create-project.ps1
+│   ├── 01-ffmpeg.ps1
 │   ├── 02_cull_frames.py
 │   ├── 03_run_colmap.py
-│   └── 04_train_splat.py
+│   └── 04_undistort.py
 ├── projects\
 │   └── house_frontage_01\
 │       ├── footage\           ← raw MP4s go here
 │       ├── frames\            ← extracted frames (with frames/culled/ subdir)
-│       ├── images\            ← culled frames — COLMAP input AND gsplat input
+│       ├── images\            ← culled frames — COLMAP input
 │       ├── colmap.db          ← COLMAP database
 │       ├── sparse\
 │       │   └── 0\             ← sparse model (cameras.bin, images.bin, points3D.bin)
-│       └── output\
-│           └── ply\
-│               └── point_cloud_29999.ply   ← final output
+│       └── dense\             ← Lichtfield Studio input (created by 04_undistort.py)
+│           ├── images\        ← undistorted images
+│           └── sparse\        ← undistorted sparse model
 └── requirements.txt
 ```
 
-Note: there is NO separate `distorted/` folder and NO `image_undistorter` step.
-gsplat reads the COLMAP sparse model directly from `sparse/0/` and the original
-images from `images/`. It handles undistortion internally.
+`dense/` is populated by `04_undistort.py` (Step 4). Load this folder into Lichtfield Studio to train.
 
 ---
 
