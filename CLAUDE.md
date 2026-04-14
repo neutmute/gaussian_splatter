@@ -41,6 +41,12 @@ Scripts should be optimised for footage captured with these specs:
 - ND filter: ND16 for sunny morning conditions
 - Gimbal: Standard mode
 
+### Camera: DJI Avata 2 (Secondary)
+- Lens: fisheye (~155° FOV)
+- EIS: OFF (must be disabled)
+- COLMAP camera model: `OPENCV_FISHEYE` — use `--camera-model OPENCV_FISHEYE` in Step 3
+- All other settings (fps, color profile, shutter, ND filter) follow the same guidelines as the Mini 4 Pro
+
 ### Shooting Scenarios
 1. **House frontage** — simple arc pass at 3–5m + lower pass at 1.5–2m
 2. **Garden** — three passes: low through (1–2m), mid orbit (3–5m), high grid (8–15m)
