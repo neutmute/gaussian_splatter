@@ -75,6 +75,69 @@ if (-not (Check-Command "cl")) {
     Write-Host "cl.exe already on PATH -- MSVC environment ready." -ForegroundColor Green
 }
 
+# ---------------------------------------------------------------------------
+# Auto-initialise conda if not on PATH (common when running from Developer
+# Command Prompt, which doesn't inherit the conda installation)
+# ---------------------------------------------------------------------------
+if (-not (Check-Command "conda")) {
+    Write-Host "conda not on PATH -- searching for Miniconda/Anaconda installation ..." -ForegroundColor Yellow
+
+    $condaSearchPaths = @(
+        "$env:USERPROFILE\miniconda3\Scripts\conda.exe",
+        "$env:USERPROFILE\anaconda3\Scripts\conda.exe",
+        "$env:LOCALAPPDATA\miniconda3\Scripts\conda.exe",
+        "$env:LOCALAPPDATA\anaconda3\Scripts\conda.exe",
+        "C:\miniconda3\Scripts\conda.exe",
+        "C:\anaconda3\Scripts\conda.exe",
+        "C:\ProgramData\miniconda3\Scripts\conda.exe",
+        "C:\ProgramData\anaconda3\Scripts\conda.exe"
+    )
+
+    $condaExe = $condaSearchPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+    if ($condaExe) {
+        $condaRoot = Split-Path (Split-Path $condaExe)   # Scripts\ -> root
+        Write-Host "  Found conda at: $condaRoot"
+
+        # Add conda and its Scripts dir to PATH for this session
+        $env:PATH = "$condaRoot;$condaRoot\Scripts;$condaRoot\Library\bin;$env:PATH"
+        $env:CONDA_EXE = $condaExe
+
+        # Run conda's shell hook so 'conda activate' works in this session
+        & $condaExe "shell.powershell" "hook" 2>&1 | Out-Null
+        if (Check-Command "conda") {
+            Write-Host "  [OK] conda initialised." -ForegroundColor Green
+        } else {
+            Write-Warning "  conda still not available after init -- activation may not work."
+        }
+    } else {
+        Write-Warning "  Miniconda/Anaconda not found."
+        Write-Warning "  Install from: https://docs.anaconda.com/miniconda/install/"
+        Write-Warning "  Then create the gsplat env:"
+        Write-Warning "    conda create -y -n gsplat python=3.10"
+        Write-Warning "    conda activate gsplat"
+    }
+} else {
+    Write-Host "conda already on PATH." -ForegroundColor Green
+}
+
+# ---------------------------------------------------------------------------
+# Check a conda env is active and warn if it isn't gsplat/Python 3.10
+# ---------------------------------------------------------------------------
+$activeEnv = $env:CONDA_DEFAULT_ENV
+if (-not $activeEnv -or $activeEnv -eq "base") {
+    Write-Warning ""
+    Write-Warning "  No conda environment is active (or you are in 'base')."
+    Write-Warning "  Run these commands first, then re-run this script:"
+    Write-Warning "    conda create -y -n gsplat python=3.10"
+    Write-Warning "    conda activate gsplat"
+    Write-Warning ""
+    $ans = Read-Host "  Continue installing into the current environment anyway? [y/N]"
+    if ($ans.ToLower() -ne "y") { exit 1 }
+} else {
+    Write-Host "Active conda env : $activeEnv" -ForegroundColor Green
+}
+
 function Run-Pip($pipArgs) {
     python -m pip $pipArgs
     if ($LASTEXITCODE -ne 0) {
