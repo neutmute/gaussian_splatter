@@ -88,24 +88,58 @@ Tool: PowerShell + pip
 
 ---
 
-### Step 1: Frame Extraction (`01_extract_frames.py`)
-Tool: FFmpeg
+### Step 0.5: Create Project (`01-create-project.ps1`)
+Tool: PowerShell
 
-```bash
-ffmpeg -i input.mp4 -vf fps=2 frames/frame_%04d.jpg -q:v 2
+**What it does:**
+- Creates the standard folder structure for a new project under `projects\<name>\`
+- Run this once before any other step for a new shoot
+
+**Example usage:**
+```powershell
+.\scripts\01-create-project.ps1 -ProjectName 20260411-house
 ```
 
-**Parameters to expose:**
-- Input MP4 path (or folder of MPs for multi-clip)
-- Output frames folder
-- FPS rate (default 2, suggest 3–4 for fast movement, 1 for slow high passes)
-- JPEG quality (default 2, range 1–5)
-- Option to process multiple MP4s into one output folder
+Then copy raw MP4s into `projects\20260411-house\footage\` before proceeding to Step 1.
 
-**Logic to include:**
-- Auto-calculate expected frame count and warn if >1000 (suggest lowering fps)
-- Support glob input: `*.mp4` in a folder → all extracted to same output dir
-- Print summary: X clips processed, Y total frames extracted
+---
+
+### Step 1: Frame Extraction (`01-ffmpeg.ps1`)
+Tool: FFmpeg
+
+**Parameters:**
+- `-Mp4` — path to a single MP4/MOV file, or a folder containing them (mandatory)
+- `-Fps` — extraction rate (default 2; use 3–4 for fast movement, 1 for slow high passes)
+- `-Quality` — JPEG quality 1–5, lower = better (default 2)
+- `-BeginTime` — optional start timestamp, e.g. `2:03:16` (H:MM:SS, MM:SS, or seconds)
+- `-EndTime` — optional end timestamp, same format
+- `-DryRun` — preview ffmpeg commands without writing any files
+
+**Logic:**
+- Project name and output folder (`projects\<name>\frames\`) inferred from the `-Mp4` path by locating the `footage` ancestor folder
+- Warns if estimated frame count exceeds 1000 (suggest lowering `-Fps`)
+- Prefixes frames per clip (`clip01_frame_0001.jpg`) so multi-clip runs don't collide
+
+**Example usage:**
+```powershell
+# All clips in a footage folder — frames written to projects\20260411-house\frames\
+.\scripts\01-ffmpeg.ps1 -Mp4 projects\20260411-house\footage
+
+# Single clip
+.\scripts\01-ffmpeg.ps1 -Mp4 projects\20260411-house\footage\DJI_0001.MP4
+
+# Higher frame rate for fast-moving passes
+.\scripts\01-ffmpeg.ps1 -Mp4 projects\20260411-house\footage -Fps 4
+
+# Extract a specific time segment (e.g. 10 minutes from a long clip)
+.\scripts\01-ffmpeg.ps1 -Mp4 projects\20260411-house\footage\DJI_0001.MP4 -BeginTime 2:03:16 -EndTime 2:13:16
+
+# From a start point to end of clip (e.g. skip shaky first 30 seconds)
+.\scripts\01-ffmpeg.ps1 -Mp4 projects\20260411-house\footage\DJI_0001.MP4 -BeginTime 0:00:30
+
+# Dry run — preview ffmpeg commands without extracting anything
+.\scripts\01-ffmpeg.ps1 -Mp4 projects\20260411-house\footage\DJI_0001.MP4 -BeginTime 2:03:16 -EndTime 2:13:16 -DryRun
+```
 
 ---
 
@@ -119,7 +153,7 @@ Tool: OpenCV (blur detection via Laplacian variance)
 - Produces a report: total frames, flagged frames, recommended culls
 
 **Parameters to expose:**
-- Input frames folder
+- Project name (resolves to `projects/<name>/frames/` automatically)
 - Blur threshold (default 100 Laplacian variance — tune to footage)
 - Similarity threshold for deduplication
 - `--dry-run` flag — report only, don't delete
@@ -127,22 +161,19 @@ Tool: OpenCV (blur detection via Laplacian variance)
 
 **Output:**
 - `cull_report.txt` listing flagged files with scores
-- Kept frames copied to `<project>/images/` (the COLMAP input folder)
-- Flagged frames moved to `frames/culled/` subfolder
+- Kept frames copied to `projects/<name>/images/` (the COLMAP input folder)
+- Flagged frames moved to `projects/<name>/frames/culled/` subfolder
 
 **Example usage (project: 20260411-house):**
 ```bash
 # Dry run first — see what would be flagged without touching anything
-python scripts/02_cull_frames.py projects/20260411-house/frames --dry-run
-
-# Review the report
-# cat projects/20260411-house/frames/cull_report.txt
+python scripts/02_cull_frames.py 20260411-house --dry-run
 
 # Auto-cull flagged frames (moves to frames/culled/, copies kept frames to images/)
-python scripts/02_cull_frames.py projects/20260411-house/frames --auto-cull
+python scripts/02_cull_frames.py 20260411-house --auto-cull
 
 # If too many frames flagged, loosen the blur threshold and retry
-python scripts/02_cull_frames.py projects/20260411-house/frames --auto-cull --blur-threshold 60
+python scripts/02_cull_frames.py 20260411-house --auto-cull --blur-threshold 60
 ```
 
 ---

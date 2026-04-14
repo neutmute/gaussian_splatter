@@ -1,15 +1,66 @@
 # Step 1 -- Frame Extraction
-# Extracts frames from all MP4s in ./raw into ./frames
-# Usage: .\step1-ffmpeg.ps1 [-Fps 2] [-Quality 2] [-DryRun]
+# Extracts frames from an MP4 file or a folder of MP4s into the project's frames\ folder.
+# The project name and output path are inferred from the MP4 location:
+#   projects\<name>\footage\clip.mp4  ->  frames written to  projects\<name>\frames\
+#
+# Usage: .\01-ffmpeg.ps1 -Mp4 <path> [-Fps 2] [-Quality 2] [-BeginTime H:MM:SS] [-EndTime H:MM:SS] [-DryRun]
 
 param(
-    [int]$Fps     = 2,      # fps to extract (default 2; use 3-4 for fast movement)
-    [int]$Quality = 2,      # JPEG quality: 1 (best) to 5 (worst)
-    [switch]$DryRun         # print commands without running ffmpeg
+    [Parameter(Mandatory)]
+    [string]$Mp4,              # path to a single MP4/MOV file, or a folder containing them
+    [int]$Fps        = 2,      # fps to extract (default 2; use 3-4 for fast movement)
+    [int]$Quality    = 2,      # JPEG quality: 1 (best) to 5 (worst)
+    [string]$BeginTime = "",   # optional start timestamp e.g. 2:03:16 or 00:02:03
+    [string]$EndTime   = "",   # optional end timestamp e.g. 2:13:16 or 00:12:13
+    [switch]$DryRun            # print commands without running ffmpeg
 )
 
-$RawDir    = Join-Path $PSScriptRoot "raw"
-$FramesDir = Join-Path $PSScriptRoot "frames"
+# Parse a timestamp string (H:MM:SS, HH:MM:SS, M:SS, or plain seconds) into total seconds
+function ConvertTo-Seconds([string]$ts) {
+    if ($ts -match '^(\d+):(\d{2}):(\d{2})$') {
+        return [int]$matches[1] * 3600 + [int]$matches[2] * 60 + [int]$matches[3]
+    } elseif ($ts -match '^(\d+):(\d{2})$') {
+        return [int]$matches[1] * 60 + [int]$matches[2]
+    } elseif ($ts -match '^\d+$') {
+        return [int]$ts
+    } else {
+        Write-Error "Cannot parse timestamp '$ts'. Use H:MM:SS, MM:SS, or plain seconds."
+        exit 1
+    }
+}
+
+# Infer the project root by walking up the path looking for a 'footage' folder.
+# projects\<name>\footage\clip.mp4  ->  projects\<name>
+# Falls back to the folder containing the clips if no 'footage' ancestor is found.
+function Get-ProjectDir([string]$path) {
+    $item = Get-Item $path -ErrorAction Stop
+    $dir  = if ($item.PSIsContainer) { $item } else { $item.Directory }
+    $current = $dir
+    while ($null -ne $current) {
+        if ($current.Name -ieq 'footage') {
+            return $current.Parent.FullName
+        }
+        $current = $current.Parent
+    }
+    return $dir.FullName
+}
+
+# Resolve input clips
+$inputItem = Get-Item $Mp4 -ErrorAction Stop
+if ($inputItem.PSIsContainer) {
+    $clips = Get-ChildItem -Path $inputItem.FullName -Include "*.mp4","*.MP4","*.mov","*.MOV" -Recurse
+} else {
+    $clips = @($inputItem)
+}
+if ($clips.Count -eq 0) {
+    Write-Error "No MP4/MOV files found at: $Mp4"
+    exit 1
+}
+
+# Infer project dir and frames output folder
+$projectDir  = Get-ProjectDir $Mp4
+$projectName = Split-Path $projectDir -Leaf
+$FramesDir   = Join-Path $projectDir "frames"
 
 # Validate ffmpeg
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
@@ -17,26 +68,39 @@ if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
-# Find input clips
-$clips = Get-ChildItem -Path $RawDir -Include "*.mp4","*.MP4","*.mov","*.MOV" -Recurse
-if ($clips.Count -eq 0) {
-    Write-Error "No MP4/MOV files found in $RawDir"
+# Parse optional time range
+$beginSec = $null
+$endSec   = $null
+if ($BeginTime -ne "") { $beginSec = ConvertTo-Seconds $BeginTime }
+if ($EndTime   -ne "") { $endSec   = ConvertTo-Seconds $EndTime   }
+if ($null -ne $beginSec -and $null -ne $endSec -and $endSec -le $beginSec) {
+    Write-Error "-EndTime must be after -BeginTime"
     exit 1
 }
 
 # Estimate total frame count and warn if over threshold
 $totalDurationSec = 0
 foreach ($clip in $clips) {
-    $probe = ffprobe -v error -select_streams v:0 -show_entries stream=duration -of csv=p=0 $clip.FullName 2>$null
+    $probe = ffprobe -v error -select_streams v:0 -show_entries stream=duration -of csv=p=0 $clip.FullName 2>&1
     if ($probe -match '[\d.]+') {
-        $totalDurationSec += [double]$matches[0]
+        $clipDur = [double]$matches[0]
+        if ($null -ne $beginSec) { $clipDur -= $beginSec }
+        if ($null -ne $endSec)   { $startOffset = if ($null -ne $beginSec) { $beginSec } else { 0 }; $clipDur = [Math]::Min($clipDur, $endSec - $startOffset) }
+        if ($clipDur -gt 0) { $totalDurationSec += $clipDur }
     }
 }
 $estimatedFrames = [int]($totalDurationSec * $Fps)
+
 Write-Host ""
+Write-Host "Project     : $projectName"
 Write-Host "Clips found : $($clips.Count)"
 Write-Host "Extract rate: $Fps fps  |  JPEG quality: $Quality"
+if ($null -ne $beginSec -or $null -ne $endSec) {
+    $rangeStr = "$(if ($BeginTime) { $BeginTime } else { 'start' }) -> $(if ($EndTime) { $EndTime } else { 'end' })"
+    Write-Host "Time range  : $rangeStr"
+}
 Write-Host "Est. frames : ~$estimatedFrames"
+Write-Host "Output dir  : $FramesDir"
 if ($estimatedFrames -gt 1000) {
     Write-Warning "Estimated frame count exceeds 1000. Consider lowering -Fps (e.g. -Fps 1) to reduce COLMAP workload."
 }
@@ -44,9 +108,9 @@ Write-Host ""
 
 # Create output folder; prompt before overwriting existing frames
 if (Test-Path $FramesDir) {
-    $existing = Get-ChildItem -Path $FramesDir -Filter "*.jpg" | Measure-Object
-    if ($existing.Count -gt 0) {
-        $answer = Read-Host "$($existing.Count) frames already exist in .rames. Overwrite? [y/N]"
+    $existing = (Get-ChildItem -Path $FramesDir -Filter "*.jpg" | Measure-Object).Count
+    if ($existing -gt 0) {
+        $answer = Read-Host "$existing frames already exist in frames\. Overwrite? [y/N]"
         if ($answer -notmatch '^[Yy]') {
             Write-Host "Skipping extraction -- existing frames kept."
             exit 0
@@ -65,12 +129,15 @@ foreach ($clip in $clips) {
     $clipIndex++
     Write-Host "[$clipIndex/$($clips.Count)] $($clip.Name)"
 
-    # Prefix frames with clip number so multi-clip runs don't collide
-    $prefix = "clip{0:D2}_frame_" -f $clipIndex
+    # Prefix frames with clip index so multi-clip runs don't collide
+    $prefix     = "clip{0:D2}_frame_" -f $clipIndex
     $outPattern = Join-Path $FramesDir ($prefix + "%04d.jpg")
 
-    $ffmpegArgs = @(
-        "-i", $clip.FullName,
+    $ffmpegArgs = @()
+    if ($null -ne $beginSec) { $ffmpegArgs += @("-ss", $beginSec) }
+    $ffmpegArgs += @("-i", $clip.FullName)
+    if ($null -ne $endSec)   { $ffmpegArgs += @("-to", $endSec) }
+    $ffmpegArgs += @(
         "-vf", "fps=$Fps",
         "-q:v", $Quality,
         $outPattern
@@ -90,6 +157,6 @@ Write-Host ""
 if ($DryRun) {
     Write-Host "[DRY RUN] $($clips.Count) clips would be processed. No files written."
 } else {
-    Write-Host "Done. $($clips.Count) clips processed, $totalFrames total frames in .rames"
-    Write-Host "Next step: run 02_cull_frames.py"
+    Write-Host "Done. $($clips.Count) clips processed, $totalFrames total frames in $FramesDir"
+    Write-Host "Next step: python scripts\02_cull_frames.py projects\$projectName\frames"
 }
