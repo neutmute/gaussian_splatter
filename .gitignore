@@ -1,2 +1,4 @@
 projects/
 database.db
+scripts/__pycache__/04_undistort.cpython-314.pyc
+tests/__pycache__/test_04_undistort.cpython-314-pytest-9.0.3.pyc

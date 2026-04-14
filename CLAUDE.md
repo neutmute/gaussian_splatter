@@ -1,7 +1,7 @@
 # Gaussian Splat Pipeline — Project Context & Script Briefing
 
 > This file provides context for Claude Code to build reusable scripts for processing
-> drone footage into Gaussian Splat scenes using COLMAP + gsplat.
+> drone footage into Gaussian Splat scenes using COLMAP + Lichtfield Studio.
 > Place this file in your project root: `C:\code\gaussian-splat\CLAUDE.md`
 >
 > Tutorial reference: https://smartdatascan.com/tutorials/gaussian-splatting-windows/
