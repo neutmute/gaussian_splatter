@@ -10,14 +10,15 @@ Outputs sparse/0/ only. Run 04_undistort.py next to produce the dense/ folder
 required by Lichtfield Studio.
 
 Usage:
-    python scripts/03_run_colmap.py <project_dir> [options]
+    python scripts/03_run_colmap.py <project_name_or_dir> [options]
 
 Examples:
-    python scripts/03_run_colmap.py projects/house_01
-    python scripts/03_run_colmap.py projects/house_01 --exhaustive
-    python scripts/03_run_colmap.py projects/house_01 --exhaustive --guided-matching --relaxed
-    python scripts/03_run_colmap.py projects/house_01 --overlap 25
-    python scripts/03_run_colmap.py projects/house_01 --overwrite
+    python scripts/03_run_colmap.py 20260411-house
+    python scripts/03_run_colmap.py 20260411-house --exhaustive
+    python scripts/03_run_colmap.py 20260411-house --exhaustive --guided-matching --relaxed
+    python scripts/03_run_colmap.py 20260411-house --overlap 25
+    python scripts/03_run_colmap.py 20260411-house --overwrite
+    python scripts/03_run_colmap.py projects/20260411-house  (full path also accepted)
 
 Expected project layout (output of 02_cull_frames.py):
     <project_dir>/
@@ -102,8 +103,9 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("project_dir", type=Path,
-                        help="Project root directory (must contain an 'images/' subfolder).")
+    parser.add_argument("project_dir",
+                        help="Project name (e.g. 20260411-house) or full path to project root. "
+                             "A bare name is resolved to projects/<name>/ relative to the repo root.")
     parser.add_argument("--overlap", type=int, default=15,
                         help="Sequential matcher overlap (default: 15). "
                              "Increase to 20–30 for fast-moving or multi-clip footage.")
@@ -128,7 +130,15 @@ def main() -> None:
                         help="Delete existing colmap.db and sparse/ and start fresh.")
     args = parser.parse_args()
 
-    project    = args.project_dir.resolve()
+    # Accept bare project name (e.g. "20260411-house") or a full/relative path.
+    # A bare name (no path separators) is resolved to projects/<name>/ from the repo root.
+    raw = Path(args.project_dir)
+    if raw.parts == (raw.name,):  # no directory component → bare name
+        repo_root = Path(__file__).resolve().parent.parent
+        project = (repo_root / "projects" / raw).resolve()
+    else:
+        project = raw.resolve()
+
     colmap     = args.colmap_bin
     images_dir = project / "images"
     db         = project / "colmap.db"

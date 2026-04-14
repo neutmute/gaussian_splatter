@@ -254,19 +254,19 @@ colmap mapper \
 **Example usage (project: 20260411-house):**
 ```bash
 # Standard run — sequential matcher, overlap 15
-python scripts/03_run_colmap.py projects/20260411-house
+python scripts/03_run_colmap.py 20260411-house
 
 # If registration is low (<70%) or footage is multi-clip — try exhaustive matcher
-python scripts/03_run_colmap.py projects/20260411-house --exhaustive
+python scripts/03_run_colmap.py 20260411-house --exhaustive
 
 # Difficult scene (repetitive facade, tight arc) — exhaustive + guided + relaxed thresholds
-python scripts/03_run_colmap.py projects/20260411-house --exhaustive --guided-matching --relaxed
+python scripts/03_run_colmap.py 20260411-house --exhaustive --guided-matching --relaxed
 
 # Fisheye lens (e.g. DJI Avata 2, 155° FOV) — use OPENCV_FISHEYE camera model
-python scripts/03_run_colmap.py projects/20260411-house --camera-model OPENCV_FISHEYE
+python scripts/03_run_colmap.py 20260411-house --camera-model OPENCV_FISHEYE
 
 # Re-run after failed attempt (auto-deletes stale colmap.db and sparse/)
-python scripts/03_run_colmap.py projects/20260411-house --overwrite
+python scripts/03_run_colmap.py 20260411-house --overwrite
 ```
 
 ---
