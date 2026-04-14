@@ -6,9 +6,10 @@
 #   footage\          <- drop raw MP4s here before running 01-ffmpeg.ps1
 #   frames\           <- extracted frames land here
 #   frames\culled\    <- frames culled by 02_cull_frames.py
-#   images\           <- kept frames; COLMAP + gsplat input
+#   images\           <- kept frames; COLMAP input
 #   sparse\0\         <- COLMAP sparse model output
-#   output\ply\       <- final .ply files from gsplat training
+#   dense\            <- undistorted output; Lichtfield Studio input (populated by 04_undistort.py)
+#   output\ply\       <- reserved for future use
 
 param(
     [Parameter(Mandatory)]
@@ -29,6 +30,7 @@ $folders = @(
     "frames\culled",
     "images",
     "sparse\0",
+    "dense",
     "output\ply"
 )
 
@@ -46,7 +48,8 @@ foreach ($folder in $folders) {
 Write-Host ""
 Write-Host "Done. Next steps:"
 Write-Host "  1. Copy raw MP4s into: $ProjectDir\footage\"
-Write-Host "  2. Extract frames    : .\scripts\01-ffmpeg.ps1  (from project root, with footage\ as raw\)"
-Write-Host "  3. Cull frames       : python scripts\02_cull_frames.py projects\$ProjectName\frames"
-Write-Host "  4. Run COLMAP        : python scripts\03_run_colmap.py projects\$ProjectName"
-Write-Host "  5. Train splat       : python scripts\04_train_splat.py projects\$ProjectName"
+Write-Host "  2. Extract frames    : .\scripts\01-ffmpeg.ps1 -Mp4 projects\$ProjectName\footage"
+Write-Host "  3. Cull frames       : python scripts\02_cull_frames.py $ProjectName"
+Write-Host "  4. Run COLMAP        : python scripts\03_run_colmap.py $ProjectName"
+Write-Host "  5. Undistort         : python scripts\04_undistort.py $ProjectName"
+Write-Host "  6. Train             : open Lichtfield Studio, load projects\$ProjectName\dense\"
