@@ -338,12 +338,9 @@ External tools (must be installed separately):
 |---|---|---|
 | COLMAP registers <70% images | Blur, low overlap | Warn user, suggest `--exhaustive --guided-matching` |
 | Multiple sparse models | Fragmented reconstruction | Detect in output, warn, suggest more overlap in capture |
-| VRAM OOM during training | GPU too small | Auto-detect and suggest higher `--data-factor` |
 | pycolmap `struct.unpack('L'...)` error | Windows binary parsing bug in stock pycolmap | Warn and print fix command |
 | FFmpeg not found | Not on PATH | Clear error message with install instructions |
 | Frames folder already exists | Re-run scenario | Ask user to confirm overwrite or skip |
-| gsplat build fails | DISTUTILS_USE_SDK not set, or wrong CUDA toolkit | Script sets env var; check nvcc version matches PyTorch CUDA |
-| Blackwell GPU not recognised by PyTorch | Wrong PyTorch build (needs cu128) | prereqs script auto-detects sm_120 and installs cu128 build |
 
 ---
 
