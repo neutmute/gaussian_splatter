@@ -16,7 +16,6 @@ def project(tmp_path):
     (p / "images").mkdir(parents=True)
     (p / "images" / "frame_0001.jpg").write_bytes(b"")
     (p / "sparse" / "0").mkdir(parents=True)
-    (p / "dense").mkdir()
     return tmp_path, p
 
 
@@ -38,7 +37,6 @@ def test_preflight_fails_when_project_missing(tmp_path):
 def test_preflight_fails_when_images_missing(tmp_path):
     proj = tmp_path / "projects" / "test-project"
     (proj / "sparse" / "0").mkdir(parents=True)
-    (proj / "dense").mkdir()
     with pytest.raises(SystemExit):
         undistort.preflight(tmp_path / "projects", "test-project")
 
@@ -46,22 +44,34 @@ def test_preflight_fails_when_images_missing(tmp_path):
 def test_preflight_fails_when_sparse_missing(tmp_path):
     proj = tmp_path / "projects" / "test-project"
     (proj / "images").mkdir(parents=True)
-    (proj / "dense").mkdir()
     with pytest.raises(SystemExit):
         undistort.preflight(tmp_path / "projects", "test-project")
 
 
 def test_preflight_fails_when_dense_has_content_and_no_overwrite(project):
     root, proj = project
-    (proj / "dense" / "images").mkdir()
+    (proj / "dense" / "images").mkdir(parents=True)
     (proj / "dense" / "images" / "f.jpg").write_bytes(b"")
     with pytest.raises(SystemExit):
         undistort.preflight(root / "projects", "test-project", overwrite=False)
 
 
-def test_preflight_deletes_dense_when_overwrite(project):
+def test_preflight_clears_and_recreates_dense_when_overwrite(project):
     root, proj = project
+    # Simulate a prior partial run: dense/ exists with images inside
+    (proj / "dense").mkdir()
     (proj / "dense" / "images").mkdir()
     (proj / "dense" / "images" / "f.jpg").write_bytes(b"")
     undistort.preflight(root / "projects", "test-project", overwrite=True)
-    assert not (proj / "dense" / "images").exists()
+    assert (proj / "dense").exists()            # directory was recreated
+    assert not any((proj / "dense").iterdir())  # and is empty
+
+
+def test_preflight_passes_when_dense_images_exists_but_empty(project):
+    root, proj = project
+    # Simulate partial run: dense/images/ exists but is empty
+    (proj / "dense").mkdir()
+    (proj / "dense" / "images").mkdir()
+    # Should not raise — treated as a clean slate
+    undistort.preflight(root / "projects", "test-project", overwrite=False)
+    assert (proj / "dense").exists()

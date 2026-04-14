@@ -40,21 +40,21 @@ def resolve_paths(projects_root: Path, project_name: str) -> dict:
     }
 
 
-def preflight(projects_root: Path, project_name: str, overwrite: bool = False):
+def preflight(projects_root: Path, project_name: str, overwrite: bool = False) -> dict:
     paths = resolve_paths(projects_root, project_name)
 
     if not paths["project"].exists():
         sys.exit(
-            f"Project not found: {paths['project']}\n"
+            f"ERROR: Project not found: {paths['project']}\n"
             f"Create it first with: .\\scripts\\01-create-project.ps1 -ProjectName {project_name}"
         )
 
     if not paths["images"].exists():
-        sys.exit(f"images/ folder not found: {paths['images']}\n"
+        sys.exit(f"ERROR: images/ folder not found: {paths['images']}\n"
                  f"Run 02_cull_frames.py first.")
 
     if not paths["sparse"].exists():
-        sys.exit(f"sparse/0/ folder not found: {paths['sparse']}\n"
+        sys.exit(f"ERROR: sparse/0/ folder not found: {paths['sparse']}\n"
                  f"Run 03_run_colmap.py first.")
 
     # Check if dense/ already has output
@@ -62,7 +62,9 @@ def preflight(projects_root: Path, project_name: str, overwrite: bool = False):
     if dense_images.exists() and any(dense_images.iterdir()):
         if not overwrite:
             sys.exit(
-                f"dense/ already contains output. Use --overwrite to re-run."
+                f"ERROR: dense/ already contains output. Use --overwrite to re-run."
             )
         shutil.rmtree(paths["dense"])
-        paths["dense"].mkdir()
+
+    paths["dense"].mkdir(exist_ok=True)
+    return paths
