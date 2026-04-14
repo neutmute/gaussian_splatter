@@ -141,27 +141,6 @@ Tool: FFmpeg
 .\scripts\01-ffmpeg.ps1 -Mp4 projects\20260411-house\footage\DJI_0001.MP4 -BeginTime 2:03:16 -EndTime 2:13:16 -DryRun
 ```
 
-**Example usage:**
-```powershell
-# Single clip — project name inferred from path (projects\20260411-house\footage\)
-.\scripts\01-ffmpeg.ps1 -Mp4 projects\20260411-house\footage\DJI_0001.MP4
-
-# All clips in a footage folder — frames written to projects\20260411-house\frames\
-.\scripts\01-ffmpeg.ps1 -Mp4 projects\20260411-house\footage
-
-# Higher frame rate for fast-moving passes
-.\scripts\01-ffmpeg.ps1 -Mp4 projects\20260411-house\footage -Fps 4
-
-# Extract a specific time segment (e.g. 10 minutes from a long clip)
-.\scripts\01-ffmpeg.ps1 -Mp4 projects\20260411-house\footage\DJI_0001.MP4 -BeginTime 2:03:16 -EndTime 2:13:16
-
-# From a start point to end of clip (e.g. skip shaky first 30 seconds)
-.\scripts\01-ffmpeg.ps1 -Mp4 projects\20260411-house\footage\DJI_0001.MP4 -BeginTime 0:00:30
-
-# Dry run — preview ffmpeg commands without extracting anything
-.\scripts\01-ffmpeg.ps1 -Mp4 projects\20260411-house\footage -BeginTime 2:03:16 -EndTime 2:13:16 -DryRun
-```
-
 ---
 
 ### Step 2: Frame QC / Cull (`02_cull_frames.py`)
@@ -208,8 +187,7 @@ Runs the COLMAP pipeline headlessly via CLI (no GUI required):
 2. Feature matching  (sequential by default; exhaustive with --exhaustive)
 3. Sparse reconstruction (mapper)
 
-No undistortion step — gsplat reads the COLMAP sparse model directly and handles
-undistortion internally.
+Outputs `sparse/0/` only. Run `04_undistort.py` next to produce the `dense/` folder required by Lichtfield Studio.
 
 ```bash
 # Feature extraction
