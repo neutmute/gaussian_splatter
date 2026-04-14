@@ -67,3 +67,70 @@ def preflight(projects_root: Path, project_name: str, overwrite: bool = False) -
 
     paths["dense"].mkdir(exist_ok=True)
     return paths
+
+
+def validate_output(dense: Path) -> int:
+    """Check dense/ has images and sparse. Returns image count."""
+    dense_images = dense / "images"
+    dense_sparse = dense / "sparse"
+
+    if not dense_images.exists():
+        sys.exit(f"ERROR: Output validation failed: {dense_images} not found. "
+                 f"COLMAP may have crashed — check output above.")
+
+    image_files = list(dense_images.iterdir())
+    if not image_files:
+        sys.exit(f"ERROR: Output validation failed: {dense_images} is empty. "
+                 f"COLMAP may have crashed — check output above.")
+
+    if not dense_sparse.exists():
+        sys.exit(f"ERROR: Output validation failed: {dense_sparse} not found.")
+
+    return len(image_files)
+
+
+def build_colmap_cmd(paths: dict) -> list:
+    return [
+        "colmap", "image_undistorter",
+        "--image_path",     str(paths["images"]),
+        "--input_path",     str(paths["sparse"]),
+        "--output_path",    str(paths["dense"]),
+        "--output_type",    "COLMAP",
+        "--max_image_size", "1600",
+    ]
+
+
+def main():
+    scripts_dir = Path(__file__).parent
+    projects_root = scripts_dir.parent / "projects"
+
+    parser = argparse.ArgumentParser(description="COLMAP undistortion for Lichtfield Studio")
+    parser.add_argument("project_name",
+                        help="Project folder name under projects\\ (e.g. 20260411-house)")
+    parser.add_argument("--overwrite", action="store_true",
+                        help="Delete existing dense/ output and re-run")
+    args = parser.parse_args()
+
+    paths = preflight(projects_root, args.project_name, overwrite=args.overwrite)
+
+    print(f"\nProject    : {args.project_name}")
+    print(f"Images in  : {paths['images']}")
+    print(f"Sparse in  : {paths['sparse']}")
+    print(f"Dense out  : {paths['dense']}")
+    print()
+
+    cmd = build_colmap_cmd(paths)
+    print(f"Running: {' '.join(cmd)}\n")
+
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        sys.exit(f"\nERROR: COLMAP exited with code {result.returncode}. Check output above.")
+
+    count = validate_output(paths["dense"])
+
+    print(f"\nDone. Undistorted {count} images -> {paths['dense']}")
+    print(f"Next step: open Lichtfield Studio and load {paths['dense']}")
+
+
+if __name__ == "__main__":
+    main()

@@ -82,3 +82,47 @@ def test_preflight_returns_paths_dict(project):
     assert isinstance(paths, dict)
     assert paths["project"] == proj
     assert paths["dense"] == proj / "dense"
+
+
+from unittest.mock import MagicMock, call
+
+
+def test_validate_output_passes_when_dense_populated(project):
+    root, proj = project
+    (proj / "dense").mkdir()
+    (proj / "dense" / "images").mkdir(parents=True)
+    (proj / "dense" / "images" / "frame_0001.jpg").write_bytes(b"")
+    (proj / "dense" / "sparse").mkdir(parents=True)
+    count = undistort.validate_output(proj / "dense")
+    assert count == 1
+
+
+def test_validate_output_fails_when_dense_images_empty(project):
+    root, proj = project
+    (proj / "dense").mkdir()
+    (proj / "dense" / "images").mkdir(parents=True)
+    (proj / "dense" / "sparse").mkdir(parents=True)
+    with pytest.raises(SystemExit):
+        undistort.validate_output(proj / "dense")
+
+
+def test_validate_output_fails_when_dense_sparse_missing(project):
+    root, proj = project
+    (proj / "dense").mkdir()
+    (proj / "dense" / "images").mkdir(parents=True)
+    (proj / "dense" / "images" / "frame_0001.jpg").write_bytes(b"")
+    with pytest.raises(SystemExit):
+        undistort.validate_output(proj / "dense")
+
+
+def test_build_colmap_cmd(project):
+    root, proj = project
+    paths = undistort.resolve_paths(root / "projects", "test-project")
+    cmd = undistort.build_colmap_cmd(paths)
+    assert cmd[0] == "colmap"
+    assert "image_undistorter" in cmd
+    assert "--max_image_size" in cmd
+    assert "1600" in cmd
+    assert str(paths["images"]) in cmd
+    assert str(paths["sparse"]) in cmd
+    assert str(paths["dense"]) in cmd
