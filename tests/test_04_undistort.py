@@ -69,9 +69,16 @@ def test_preflight_clears_and_recreates_dense_when_overwrite(project):
 
 def test_preflight_passes_when_dense_images_exists_but_empty(project):
     root, proj = project
-    # Simulate partial run: dense/images/ exists but is empty
+    # Simulate dense/ existing but being empty (e.g. created by project scaffold)
     (proj / "dense").mkdir()
-    (proj / "dense" / "images").mkdir()
-    # Should not raise — treated as a clean slate
+    # Should not raise — empty dense/ is treated as a clean slate
     undistort.preflight(root / "projects", "test-project", overwrite=False)
     assert (proj / "dense").exists()
+
+
+def test_preflight_returns_paths_dict(project):
+    root, proj = project
+    paths = undistort.preflight(root / "projects", "test-project")
+    assert isinstance(paths, dict)
+    assert paths["project"] == proj
+    assert paths["dense"] == proj / "dense"

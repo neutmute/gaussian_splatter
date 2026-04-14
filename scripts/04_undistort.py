@@ -58,11 +58,10 @@ def preflight(projects_root: Path, project_name: str, overwrite: bool = False) -
                  f"Run 03_run_colmap.py first.")
 
     # Check if dense/ already has output
-    dense_images = paths["dense"] / "images"
-    if dense_images.exists() and any(dense_images.iterdir()):
+    if paths["dense"].exists() and any(paths["dense"].iterdir()):
         if not overwrite:
             sys.exit(
-                f"ERROR: dense/ already contains output. Use --overwrite to re-run."
+                "ERROR: dense/ already contains output. Use --overwrite to re-run."
             )
         shutil.rmtree(paths["dense"])
 
