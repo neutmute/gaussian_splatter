@@ -60,29 +60,14 @@ Scripts should be optimised for footage captured with these specs:
 Tool: PowerShell + pip
 
 **What it does:**
-- Auto-detects GPU compute capability and installs the right PyTorch CUDA build
-  - Blackwell (sm_120, RTX 50xx) → PyTorch + CUDA 12.8
-  - Ada/Hopper (sm_89+) → PyTorch + CUDA 12.1
-  - Older GPUs → PyTorch + CUDA 11.8
 - Installs pipeline script dependencies from `requirements.txt`
-- Clones gsplat repo (if not present), sets `DISTUTILS_USE_SDK=1`, builds it with `pip install .`
-- Installs gsplat example dependencies
-- Applies the pycolmap Windows binary parsing fix
-- Checks PATH for required external tools (ffmpeg, colmap) and GPU via nvidia-smi
+- Checks PATH for required external tools (ffmpeg, colmap)
 
-**Run once before using any pipeline scripts. Requires:**
-- CUDA Toolkit matching your GPU (12.8 for Blackwell) — https://developer.nvidia.com/cuda-downloads
-- Microsoft Build Tools for VS 2022 with "Desktop development with C++" workload
-  — https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022
-- Run from a "Developer Command Prompt for VS 2022" (or vcvars64.bat must have been called)
+**Run once before using any pipeline scripts.**
 
 **Example usage:**
 ```powershell
-# Default gsplat path C:\apps\gsplat
 .\scripts\00-install-prereqs.ps1
-
-# Custom gsplat path
-.\scripts\00-install-prereqs.ps1 -GsplatPath C:\apps\gsplat
 ```
 
 ---
