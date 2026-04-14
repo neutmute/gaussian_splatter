@@ -22,9 +22,8 @@ so the user can re-run individual steps without repeating the whole pipeline.
 - **OS:** Windows (primary), Linux (secondary)
 - **GPU:** NVIDIA with CUDA support — RTX 5060 Ti (Blackwell, sm_120) is primary dev GPU
 - **CUDA Toolkit:** 12.8+ (required for Blackwell sm_120; 12.6 for Ada/older)
-- **Python:** 3.10 recommended (gsplat tested on 3.10)
-- **Tools required:** FFmpeg, COLMAP v3.11+, Git, Microsoft Build Tools for VS 2022
-- **Training repo:** github.com/nerfstudio-project/gsplat (NOT the abandoned graphdeco-inria/gaussian-splatting)
+- **Python:** 3.10 recommended
+- **Tools required:** FFmpeg, COLMAP v3.11+, Git
 
 ---
 
