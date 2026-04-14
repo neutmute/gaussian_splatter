@@ -329,8 +329,6 @@ Pillow
 External tools (must be installed separately):
 - `ffmpeg` — on PATH
 - `colmap` v3.11+ — on PATH (download Windows ZIP from github.com/colmap/colmap/releases)
-- `gsplat` repo — cloned to disk, path passed via --gsplat flag or pipeline_config.yaml
-- Microsoft Build Tools for VS 2022 — required to compile gsplat CUDA kernels
 
 ---
 
