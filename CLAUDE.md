@@ -65,6 +65,9 @@ Scripts should be optimised for footage captured with these specs:
 ### Step 0: Install Prerequisites (`00-install-prereqs.ps1`)
 Tool: PowerShell + pip
 
+**Input:** `requirements.txt` (project root)
+**Output:** Python packages installed; PATH validation report printed to console
+
 **What it does:**
 - Installs pipeline script dependencies from `requirements.txt`
 - Checks PATH for required external tools (ffmpeg, colmap)
@@ -81,6 +84,9 @@ Tool: PowerShell + pip
 ### Step 0.5: Create Project (`01-create-project.ps1`)
 Tool: PowerShell
 
+**Input:** `-ProjectName` parameter (e.g. `20260411-house`)
+**Output:** `projects\<name>\` folder tree created (footage, frames, images, sparse, dense subdirs)
+
 **What it does:**
 - Creates the standard folder structure for a new project under `projects\<name>\`
 - Run this once before any other step for a new shoot
@@ -96,6 +102,10 @@ Then copy raw MP4s into `projects\20260411-house\footage\` before proceeding to 
 
 ### Step 1: Frame Extraction (`01-ffmpeg.ps1`)
 Tool: FFmpeg
+
+**Input:** `projects\<name>\footage\` (raw MP4/MOV files)
+
+**Output:** `projects\<name>\frames\` (extracted JPEG frames, prefixed per clip)
 
 **Parameters:**
 - `-Mp4` — path to a single MP4/MOV file, or a folder containing them (mandatory)
@@ -136,6 +146,9 @@ Tool: FFmpeg
 ### Step 2: Frame QC / Cull (`02_cull_frames.py`)
 Tool: OpenCV (blur detection via Laplacian variance)
 
+**Input:** `projects/<name>/frames/` (extracted JPEG frames from Step 1)
+**Output:** `projects/<name>/images/` (kept frames — COLMAP input); `projects/<name>/frames/culled/` (rejected frames); `cull_report.txt`
+
 **What it does:**
 - Scans extracted frames and scores each for sharpness
 - Flags and optionally deletes frames below a blur threshold
@@ -170,6 +183,10 @@ python scripts/02_cull_frames.py 20260411-house --auto-cull --blur-threshold 60
 
 ### Step 3: COLMAP SfM (`03_run_colmap.py`)
 Tool: COLMAP CLI v3.11+
+
+**Input:** `projects/<name>/images/` (Step 2 copies kept frames here — this is Step 2's output folder, not `frames/`)
+
+**Output:** `projects/<name>/colmap.db`; `projects/<name>/sparse/0/` (cameras.bin, images.bin, points3D.bin)
 
 **What it does:**
 Runs the COLMAP pipeline headlessly via CLI (no GUI required):
@@ -242,6 +259,9 @@ python scripts/03_run_colmap.py 20260411-house --overwrite
 ### Step 4: COLMAP Undistortion (`04_undistort.py`)
 Tool: COLMAP CLI (`image_undistorter`)
 
+**Input:** `projects/<name>/images/` + `projects/<name>/sparse/0/` (from Step 3)
+**Output:** `projects/<name>/dense/images/` (undistorted images); `projects/<name>/dense/sparse/` (undistorted sparse model)
+
 **What it does:**
 Runs `colmap image_undistorter` to produce undistorted images and an undistorted sparse model
 in `projects/<name>/dense/`. This is the folder Lichtfield Studio loads directly.
@@ -272,6 +292,9 @@ python scripts/04_undistort.py 20260411-house --overwrite
 ---
 
 ### Step 5: Lichtfield Studio (manual)
+
+**Input:** `projects\<name>\dense\` (produced by Step 4)
+**Output:** `projects\<name>\output\ply\point_cloud_29999.ply` (trained Gaussian Splat)
 
 **What it does:**
 Lichtfield Studio is a Windows GUI application for training and viewing Gaussian Splats.
