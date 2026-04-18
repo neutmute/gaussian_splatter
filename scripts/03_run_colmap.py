@@ -227,7 +227,6 @@ def main() -> None:
                 [
                     colmap, "exhaustive_matcher",
                     "--database_path",          str(db),
-                    "--SiftMatching.use_gpu",   "1",
                     *guided_flag,
                 ],
                 step="2/3 — Exhaustive matching" + (" (guided)" if args.guided_matching else ""),

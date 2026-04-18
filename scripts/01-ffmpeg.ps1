@@ -48,7 +48,7 @@ function Get-ProjectDir([string]$path) {
 # Resolve input clips
 $inputItem = Get-Item $Mp4 -ErrorAction Stop
 if ($inputItem.PSIsContainer) {
-    $clips = Get-ChildItem -Path $inputItem.FullName -Include "*.mp4","*.MP4","*.mov","*.MOV" -Recurse
+    $clips = Get-ChildItem -Path $inputItem.FullName -Include "*.mp4","*.MP4","*.mov","*.MOV" -Recurse | Sort-Object Name
 } else {
     $clips = @($inputItem)
 }
@@ -121,7 +121,7 @@ if (Test-Path $FramesDir) {
     if (-not $DryRun) { New-Item -ItemType Directory -Path $FramesDir | Out-Null }
 }
 
-# Process each clip
+# Process each clip — frames written with a per-clip prefix to avoid collisions during extraction
 $clipIndex   = 0
 $totalFrames = 0
 
@@ -129,7 +129,7 @@ foreach ($clip in $clips) {
     $clipIndex++
     Write-Host "[$clipIndex/$($clips.Count)] $($clip.Name)"
 
-    # Prefix frames with clip index so multi-clip runs don't collide
+    # Temporary per-clip prefix; frames are renumbered into a single sequence after all clips
     $prefix     = "clip{0:D2}_frame_" -f $clipIndex
     $outPattern = Join-Path $FramesDir ($prefix + "%04d.jpg")
 
@@ -157,6 +157,17 @@ Write-Host ""
 if ($DryRun) {
     Write-Host "[DRY RUN] $($clips.Count) clips would be processed. No files written."
 } else {
-    Write-Host "Done. $($clips.Count) clips processed, $totalFrames total frames in $FramesDir"
+    # Renumber all per-clip frames into a single contiguous sequence (frame_0001.jpg, frame_0002.jpg, ...)
+    # sorted by clip index then frame number so the chronological order is preserved.
+    # This avoids filename gaps at clip boundaries that would break COLMAP's sequential matcher.
+    Write-Host "Renumbering frames into a single sequence..."
+    $allFrames = Get-ChildItem -Path $FramesDir -Filter "clip*_frame_*.jpg" | Sort-Object Name
+    $seq = 1
+    foreach ($f in $allFrames) {
+        $newName = "frame_{0:D4}.jpg" -f $seq
+        Rename-Item -Path $f.FullName -NewName $newName
+        $seq++
+    }
+    Write-Host "Done. $($clips.Count) clips -> $totalFrames frames in $FramesDir"
     Write-Host "Next step: python scripts\02_cull_frames.py projects\$projectName\frames"
 }
