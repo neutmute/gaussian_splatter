@@ -1,13 +1,11 @@
 # Step 1 -- Frame Extraction
-# Extracts frames from an MP4 file or a folder of MP4s into the project's frames\ folder.
-# The project name and output path are inferred from the MP4 location:
-#   projects\<name>\footage\clip.mp4  ->  frames written to  projects\<name>\frames\
+# Extracts frames from a project's footage\ folder into the project's frames\ folder.
 #
-# Usage: .\01-ffmpeg.ps1 -Mp4 <path> [-Fps 2] [-Quality 2] [-BeginTime H:MM:SS] [-EndTime H:MM:SS] [-DryRun]
+# Usage: .\01-ffmpeg.ps1 -ProjectName <name> [-Fps 2] [-Quality 2] [-BeginTime H:MM:SS] [-EndTime H:MM:SS] [-DryRun]
 
 param(
     [Parameter(Mandatory)]
-    [string]$Mp4,              # path to a single MP4/MOV file, or a folder containing them
+    [string]$ProjectName,      # project folder name under projects\
     [int]$Fps        = 2,      # fps to extract (default 2; use 3-4 for fast movement)
     [int]$Quality    = 2,      # JPEG quality: 1 (best) to 5 (worst)
     [string]$BeginTime = "",   # optional start timestamp e.g. 2:03:16 or 00:02:03
@@ -29,38 +27,27 @@ function ConvertTo-Seconds([string]$ts) {
     }
 }
 
-# Infer the project root by walking up the path looking for a 'footage' folder.
-# projects\<name>\footage\clip.mp4  ->  projects\<name>
-# Falls back to the folder containing the clips if no 'footage' ancestor is found.
-function Get-ProjectDir([string]$path) {
-    $item = Get-Item $path -ErrorAction Stop
-    $dir  = if ($item.PSIsContainer) { $item } else { $item.Directory }
-    $current = $dir
-    while ($null -ne $current) {
-        if ($current.Name -ieq 'footage') {
-            return $current.Parent.FullName
-        }
-        $current = $current.Parent
-    }
-    return $dir.FullName
-}
+# Resolve project paths
+$ProjectsRoot = Join-Path (Split-Path $PSScriptRoot -Parent) "projects"
+$projectDir   = Join-Path $ProjectsRoot $ProjectName
+$footageDir   = Join-Path $projectDir "footage"
+$FramesDir    = Join-Path $projectDir "frames"
 
-# Resolve input clips
-$inputItem = Get-Item $Mp4 -ErrorAction Stop
-if ($inputItem.PSIsContainer) {
-    $clips = Get-ChildItem -Path $inputItem.FullName -Include "*.mp4","*.MP4","*.mov","*.MOV" -Recurse | Sort-Object Name
-} else {
-    $clips = @($inputItem)
+if (-not (Test-Path $projectDir)) {
+    Write-Error "Project '$ProjectName' not found at $projectDir"
+    exit 1
 }
-if ($clips.Count -eq 0) {
-    Write-Error "No MP4/MOV files found at: $Mp4"
+if (-not (Test-Path $footageDir)) {
+    Write-Error "footage\ folder not found at $footageDir"
     exit 1
 }
 
-# Infer project dir and frames output folder
-$projectDir  = Get-ProjectDir $Mp4
-$projectName = Split-Path $projectDir -Leaf
-$FramesDir   = Join-Path $projectDir "frames"
+# Resolve input clips
+$clips = Get-ChildItem -Path $footageDir -Include "*.mp4","*.MP4","*.mov","*.MOV" -Recurse | Sort-Object Name
+if ($clips.Count -eq 0) {
+    Write-Error "No MP4/MOV files found in: $footageDir"
+    exit 1
+}
 
 # Validate ffmpeg
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
@@ -169,5 +156,5 @@ if ($DryRun) {
         $seq++
     }
     Write-Host "Done. $($clips.Count) clips -> $totalFrames frames in $FramesDir"
-    Write-Host "Next step: python scripts\02_cull_frames.py projects\$projectName\frames"
+    Write-Host "Next step: python scripts\02_cull_frames.py $ProjectName"
 }

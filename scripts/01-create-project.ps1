@@ -48,8 +48,8 @@ foreach ($folder in $folders) {
 Write-Host ""
 Write-Host "Done. Next steps:"
 Write-Host "  1. Copy raw MP4s into: $ProjectDir\footage\"
-Write-Host "  2. Extract frames    : .\scripts\01-ffmpeg.ps1 -Mp4 projects\$ProjectName\footage"
-Write-Host "  3. Cull frames       : python scripts\02_cull_frames.py $ProjectName"
+Write-Host "  2. Extract frames    : .\scripts\01-ffmpeg.ps1 -ProjectName $ProjectName"
+Write-Host "  3. Cull frames       : python scripts\02_cull_frames.py $ProjectName" --auto-cull
 Write-Host "  4. Run COLMAP        : python scripts\03_run_colmap.py $ProjectName"
 Write-Host "  5. Undistort         : python scripts\04_undistort.py $ProjectName"
 Write-Host "  6. Train             : open Lichtfield Studio, load projects\$ProjectName\dense\"
